@@ -1,0 +1,40 @@
+# --- secrets ---
+.env
+.env.*
+!/infra/.env.example
+infra/.env
+
+# --- data / outputs ---
+data/
+**/data/
+**/*.sqlite
+
+# uploads / generated files
+apps/api/app/uploads/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- node / next ---
+node_modules/
+.next/
+out/
+dist/
+
+# --- logs ---
+*.log
+
+# --- OS ---
+.DS_Store
+Thumbs.db
