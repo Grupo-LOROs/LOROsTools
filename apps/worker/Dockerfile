@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY processors/ processors/
 COPY cfe_lib/ cfe_lib/
+COPY templates/ templates/
 COPY worker.py .
 
 ENV PYTHONUNBUFFERED=1

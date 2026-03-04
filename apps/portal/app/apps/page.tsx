@@ -88,14 +88,17 @@ export default function AppsPage() {
                         >
                           Nuevo Job
                         </Link>
-                      ) : a.mode === "interactive" && a.ui?.url ? (
-                        <Link
-                          href={a.ui.url}
-                          className="btn btn-outline btn-sm"
-                          style={{ textDecoration: "none" }}
+                      ) : a.mode === "interactive" ? (
+                        <span
+                          className="badge"
+                          style={{
+                            background: "var(--bg-muted)",
+                            color: "var(--text-muted)",
+                            fontSize: "0.75rem",
+                          }}
                         >
-                          Abrir
-                        </Link>
+                          Próximamente
+                        </span>
                       ) : null}
                     </td>
                   </tr>
