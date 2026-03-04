@@ -1,4 +1,29 @@
+# DB
 SQLAlchemy==2.0.37
 psycopg[binary]==3.2.4
 
+# Excel
 openpyxl==3.1.5
+
+# PDF parsing
+pdfplumber==0.11.4
+
+# Data manipulation
+pandas==2.2.3
+numpy>=1.26.0
+
+# PDF generation (ComisionadorERA carátula)
+reportlab>=4.1.0
+
+# HTTP / scraping (CFE tariffs)
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Geocoding (CFE → NASA pipeline)
+pgeocode>=0.3.0
+geopy>=2.3.0
+
+# NASA / timezone / date parsing
+python-dateutil>=2.8.2
+timezonefinder>=6.1.8

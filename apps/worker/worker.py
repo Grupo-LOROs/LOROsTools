@@ -1,20 +1,32 @@
+"""
+LOROsTools Worker
+─────────────────
+Polls for queued jobs and dispatches them to the appropriate processor
+based on app_key. Each processor lives in processors/<app_key>.py.
+"""
+
 import os
-import shutil
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from openpyxl import Workbook
 from sqlalchemy import DateTime, Integer, String, Text, create_engine, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from processors import REGISTRY
+from processors.base import JobContext
+
+
+# ── Config ───────────────────────────────────────────────────
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 FILES_ROOT = os.getenv("FILES_ROOT", "/data/files")
 POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
 
+
+# ── ORM (mirrors the API model — worker only needs read/write) ─
 
 class Base(DeclarativeBase):
     pass
@@ -42,78 +54,95 @@ class Job(Base):
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 
-def _make_placeholder_xlsx(dest: Path, job: Job) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
+# ── Dispatcher ───────────────────────────────────────────────
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "result"
-    ws["A1"] = "status"
-    ws["B1"] = job.status
-    ws["A2"] = "app_key"
-    ws["B2"] = job.app_key
-    ws["A3"] = "job_id"
-    ws["B3"] = str(job.id)
-    ws["A4"] = "note"
-    ws["B4"] = "Placeholder output (worker stub). Replace with real parser/processor." 
-    wb.save(dest)
-
-
-def _process_job(job: Job) -> str:
-    """Returns relative output path."""
+def _build_context(job: Job, db: Session) -> JobContext:
+    """Build a JobContext for the given job, wiring up the progress callback."""
     files_root = Path(FILES_ROOT)
-    job_root_rel = f"jobs/{job.id}"
-    out_rel = f"{job_root_rel}/output/output.xlsx"
-    out_abs = (files_root / out_rel).resolve()
+    job_dir = files_root / "jobs" / str(job.id)
 
-    # If there is a template, copy it as a starting point
+    template_abs = None
     if job.template_path:
-        tpl_abs = (files_root / job.template_path).resolve()
-        out_abs.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(tpl_abs, out_abs)
-        return out_rel
+        template_abs = (files_root / job.template_path).resolve()
 
-    _make_placeholder_xlsx(out_abs, job)
-    return out_rel
+    def report_progress(percent: int, message: str) -> None:
+        """Update job progress in DB (called from within a processor)."""
+        job.progress = min(percent, 99)  # 100 is set only on completion
+        job.message = message
+        db.commit()
 
+    return JobContext(
+        job_id=job.id,
+        app_key=job.app_key,
+        params=job.params or {},
+        files_root=files_root,
+        inputs_dir=job_dir / "inputs",
+        output_dir=job_dir / "output",
+        template_abs=template_abs,
+        report_progress=report_progress,
+    )
+
+
+def _process_job(job: Job, db: Session) -> str:
+    """Dispatch job to the correct processor. Returns relative output path."""
+    processor_fn = REGISTRY.get(job.app_key)
+
+    if processor_fn is None:
+        raise ValueError(
+            f"No processor registered for app_key='{job.app_key}'. "
+            f"Available: {', '.join(REGISTRY.keys())}"
+        )
+
+    ctx = _build_context(job, db)
+    return processor_fn(ctx)
+
+
+# ── Main loop ────────────────────────────────────────────────
 
 def main() -> None:
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set")
 
     print(f"[worker] starting | poll={POLL_SECONDS}s | files_root={FILES_ROOT}")
+    print(f"[worker] registered processors: {', '.join(REGISTRY.keys())}")
 
     while True:
         try:
             with Session(engine) as db:
                 job = db.execute(
-                    select(Job).where(Job.status == "queued").order_by(Job.created_at.asc()).limit(1)
+                    select(Job)
+                    .where(Job.status == "queued")
+                    .order_by(Job.created_at.asc())
+                    .limit(1)
                 ).scalar_one_or_none()
 
                 if not job:
                     time.sleep(POLL_SECONDS)
                     continue
 
+                print(f"[worker] picked up job {job.id} (app={job.app_key})")
+
                 job.status = "running"
                 job.progress = 5
-                job.message = "Processing"
+                job.message = "Iniciando procesamiento..."
                 db.commit()
 
                 try:
-                    out_rel = _process_job(job)
+                    out_rel = _process_job(job, db)
                     job.output_path = out_rel
                     job.status = "succeeded"
                     job.progress = 100
-                    job.message = "Done"
+                    job.message = "Completado"
+                    print(f"[worker] job {job.id} succeeded → {out_rel}")
                 except Exception as e:
                     job.status = "failed"
                     job.progress = 100
-                    job.message = f"Failed: {e}"
+                    job.message = f"Error: {e}"
+                    print(f"[worker] job {job.id} failed: {e}")
 
                 db.commit()
 
         except Exception as e:
-            # don't die on transient errors
             print(f"[worker] loop error: {e}")
             time.sleep(POLL_SECONDS)
 
