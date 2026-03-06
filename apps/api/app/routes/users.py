@@ -36,14 +36,14 @@ def _validate_username(raw: str) -> str:
     if not USERNAME_RX.match(username):
         raise HTTPException(
             status_code=400,
-            detail="Username invalido. Usa 3-64 caracteres: letras, numeros, punto, guion o guion_bajo",
+            detail="Usuario inválido. Usa 3-64 caracteres: letras, números, punto, guion o guion_bajo",
         )
     return username
 
 
 def _validate_password(raw: str) -> None:
     if len(raw) < 8:
-        raise HTTPException(status_code=400, detail="La contrasena debe tener al menos 8 caracteres")
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
 
 
 def _normalize_app_keys(app_keys: list[str]) -> list[str]:
@@ -63,12 +63,12 @@ def _validate_app_keys_exist(app_keys: list[str], db: Session) -> None:
     }
     missing = sorted(set(app_keys) - existing)
     if missing:
-        raise HTTPException(status_code=400, detail=f"Apps invalidas: {', '.join(missing)}")
+        raise HTTPException(status_code=400, detail=f"Aplicaciones inválidas: {', '.join(missing)}")
 
 
 def _validate_user_scope(is_admin: bool, app_keys: list[str]) -> None:
     if not is_admin and not app_keys:
-        raise HTTPException(status_code=400, detail="Asigna al menos una app para usuarios no admin")
+        raise HTTPException(status_code=400, detail="Asigna al menos una app para usuarios no administradores")
 
 
 def _set_user_permissions(user: User, app_keys: list[str], db: Session) -> None:
@@ -133,7 +133,7 @@ def create_user(
 
     existing = db.query(User).filter(User.username == username).first()
     if existing:
-        raise HTTPException(status_code=409, detail="Ya existe un usuario con ese username")
+        raise HTTPException(status_code=409, detail="Ya existe un usuario con ese nombre de usuario")
 
     user = User(
         username=username,

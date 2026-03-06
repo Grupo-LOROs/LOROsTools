@@ -27,24 +27,24 @@ export default function PasswordPage() {
     setSuccess(null);
 
     if (newPassword.length < 8) {
-      setError("La nueva contrasena debe tener al menos 8 caracteres");
+      setError("La nueva contraseña debe tener al menos 8 caracteres.");
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setError("La confirmacion no coincide");
+      setError("La confirmación no coincide.");
       return;
     }
 
     setLoading(true);
     try {
       await changePassword(currentPassword, newPassword);
-      setSuccess("Contrasena actualizada correctamente");
+      setSuccess("Contraseña actualizada correctamente.");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
     } catch (err: any) {
-      setError(err?.message || "No se pudo cambiar la contrasena");
+      setError(err?.message || "No se pudo cambiar la contraseña.");
     } finally {
       setLoading(false);
     }
@@ -52,8 +52,8 @@ export default function PasswordPage() {
 
   return (
     <div style={{ maxWidth: 520, margin: "24px auto" }}>
-      <h1 style={{ fontSize: "1.3rem", marginBottom: 12 }}>Cambiar password</h1>
-      <p className="text-muted mb-4">Actualiza tu contrasena dentro del portal.</p>
+      <h1 style={{ fontSize: "1.3rem", marginBottom: 12 }}>Cambiar contraseña</h1>
+      <p className="text-muted mb-4">Actualiza tu contraseña dentro del portal.</p>
 
       <div className="card">
         {error && <div className="error-msg">{error}</div>}
@@ -61,7 +61,7 @@ export default function PasswordPage() {
 
         <form onSubmit={onSubmit}>
           <div className="form-group">
-            <label htmlFor="currentPassword">Contrasena actual</label>
+            <label htmlFor="currentPassword">Contraseña actual</label>
             <input
               id="currentPassword"
               type="password"
@@ -72,7 +72,7 @@ export default function PasswordPage() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="newPassword">Nueva contrasena</label>
+            <label htmlFor="newPassword">Nueva contraseña</label>
             <input
               id="newPassword"
               type="password"
@@ -84,7 +84,7 @@ export default function PasswordPage() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="confirmPassword">Confirmar nueva contrasena</label>
+            <label htmlFor="confirmPassword">Confirmar nueva contraseña</label>
             <input
               id="confirmPassword"
               type="password"
@@ -96,7 +96,7 @@ export default function PasswordPage() {
           </div>
 
           <button className="btn btn-primary" type="submit" disabled={loading}>
-            {loading ? "Guardando..." : "Actualizar password"}
+            {loading ? "Guardando..." : "Actualizar contraseña"}
           </button>
         </form>
       </div>

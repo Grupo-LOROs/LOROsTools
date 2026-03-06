@@ -90,10 +90,10 @@ export default function JobDetailPage() {
   async function deleteJob() {
     if (!job) return;
     if (job.status === "running") {
-      setError("No se puede borrar un job en ejecucion");
+      setError("No se puede borrar un trabajo en ejecución.");
       return;
     }
-    if (!confirm(`¿Eliminar job ${job.id}? Esta acción no se puede deshacer.`)) {
+    if (!confirm(`¿Eliminar trabajo ${job.id}? Esta acción no se puede deshacer.`)) {
       return;
     }
 
@@ -103,7 +103,7 @@ export default function JobDetailPage() {
       await apiFetch(`/jobs/${job.id}`, { method: "DELETE" });
       router.push("/jobs");
     } catch (e: any) {
-      setError(e?.message || "No se pudo eliminar el job");
+      setError(e?.message || "No se pudo eliminar el trabajo.");
     } finally {
       setDeleting(false);
     }
@@ -112,7 +112,7 @@ export default function JobDetailPage() {
   return (
     <>
       <p className="text-muted mb-4">
-        <a href="/jobs">&larr; Mis Jobs</a>
+        <a href="/jobs">&larr; Mis trabajos</a>
       </p>
 
       {error && <div className="error-msg">{error}</div>}
@@ -120,11 +120,12 @@ export default function JobDetailPage() {
       {job && (
         <>
           <div className="flex-between mb-4">
-            <h1 style={{ fontSize: "1.3rem" }}>
-              {job.app_key.replace(/_/g, " ")}
-            </h1>
+            <h1 style={{ fontSize: "1.3rem" }}>{job.app_key.replace(/_/g, " ")}</h1>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className={`badge badge-${job.status}`} style={{ fontSize: "0.85rem", padding: "4px 12px" }}>
+              <span
+                className={`badge badge-${job.status}`}
+                style={{ fontSize: "0.85rem", padding: "4px 12px" }}
+              >
                 {job.status}
                 {job.status === "running" && job.progress > 0 && ` ${job.progress}%`}
               </span>
@@ -155,8 +156,10 @@ export default function JobDetailPage() {
           <div className="card mb-4">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 24px" }}>
               <div>
-                <span className="text-muted">Job ID</span>
-                <div style={{ fontFamily: "monospace", fontSize: "0.85rem", wordBreak: "break-all" }}>{job.id}</div>
+                <span className="text-muted">ID del trabajo</span>
+                <div style={{ fontFamily: "monospace", fontSize: "0.85rem", wordBreak: "break-all" }}>
+                  {job.id}
+                </div>
               </div>
               <div>
                 <span className="text-muted">Creado por</span>
@@ -186,7 +189,7 @@ export default function JobDetailPage() {
 
               {files.inputs.length > 0 && (
                 <div style={{ marginBottom: 12 }}>
-                  <span className="text-muted">Inputs ({files.inputs.length})</span>
+                  <span className="text-muted">Entradas ({files.inputs.length})</span>
                   <ul className="file-list">
                     {files.inputs.map((f, i) => (
                       <li key={i}>
@@ -202,14 +205,14 @@ export default function JobDetailPage() {
 
               {files.template && (
                 <div style={{ marginBottom: 12 }}>
-                  <span className="text-muted">Template</span>
+                  <span className="text-muted">Plantilla</span>
                   <div>{files.template.filename}</div>
                 </div>
               )}
 
               {files.outputs.length > 0 && (
                 <div>
-                  <span className="text-muted">Outputs ({files.outputs.length})</span>
+                  <span className="text-muted">Salidas ({files.outputs.length})</span>
                   <ul className="file-list">
                     {files.outputs.map((f) => (
                       <li key={f.id}>
@@ -248,13 +251,13 @@ export default function JobDetailPage() {
 
           {job.status === "failed" && (
             <div className="error-msg">
-              El job fallo. {job.message || "Revisa los logs para mas detalle."}
+              El trabajo falló. {job.message || "Revisa los logs para más detalle."}
             </div>
           )}
 
           {!isTerminal && (
             <p className="text-muted mt-4" style={{ textAlign: "center" }}>
-              Actualizando automaticamente cada 3 segundos...
+              Actualizando automáticamente cada 3 segundos...
             </p>
           )}
         </>

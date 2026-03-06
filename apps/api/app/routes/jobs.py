@@ -123,7 +123,7 @@ def delete_job(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     if job.status == "running":
-        raise HTTPException(status_code=409, detail="No se puede borrar un job en ejecucion")
+        raise HTTPException(status_code=409, detail="No se puede borrar un trabajo en ejecución")
 
     files_root = Path(settings.files_root).resolve()
     job_dir = (files_root / "jobs" / str(job.id)).resolve()

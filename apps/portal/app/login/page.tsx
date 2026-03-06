@@ -20,7 +20,7 @@ export default function LoginPage() {
       await login(username, password);
       router.push("/apps");
     } catch (err: any) {
-      setError(err.message || "Login failed");
+      setError(err.message || "No se pudo iniciar sesión");
     } finally {
       setLoading(false);
     }

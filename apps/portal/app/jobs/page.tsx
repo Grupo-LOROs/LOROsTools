@@ -19,10 +19,10 @@ function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "ahora";
-  if (mins < 60) return `hace ${mins}m`;
+  if (mins < 60) return `hace ${mins} min`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `hace ${hrs}h`;
-  return `hace ${Math.floor(hrs / 24)}d`;
+  if (hrs < 24) return `hace ${hrs} h`;
+  return `hace ${Math.floor(hrs / 24)} d`;
 }
 
 export default function JobsPage() {
@@ -41,7 +41,7 @@ export default function JobsPage() {
   }, []);
 
   async function deleteJob(jobId: string) {
-    if (!confirm(`¿Eliminar job ${jobId}? Esta acción no se puede deshacer.`)) {
+    if (!confirm(`¿Eliminar trabajo ${jobId}? Esta acción no se puede deshacer.`)) {
       return;
     }
 
@@ -51,7 +51,7 @@ export default function JobsPage() {
       await apiFetch(`/jobs/${jobId}`, { method: "DELETE" });
       await loadJobs();
     } catch (e: any) {
-      setError(e?.message || "No se pudo eliminar el job");
+      setError(e?.message || "No se pudo eliminar el trabajo.");
     } finally {
       setDeletingId(null);
     }
@@ -59,7 +59,7 @@ export default function JobsPage() {
 
   return (
     <>
-      <h1 style={{ fontSize: "1.4rem", marginBottom: 16 }}>Mis Jobs</h1>
+      <h1 style={{ fontSize: "1.4rem", marginBottom: 16 }}>Mis trabajos</h1>
 
       {error && <div className="error-msg">{error}</div>}
 
@@ -67,8 +67,8 @@ export default function JobsPage() {
         <table>
           <thead>
             <tr>
-              <th>App</th>
-              <th>Status</th>
+              <th>Aplicación</th>
+              <th>Estatus</th>
               <th>Creado</th>
               <th style={{ width: 180 }}></th>
             </tr>
@@ -80,19 +80,29 @@ export default function JobsPage() {
                 <td>
                   <span className={`badge badge-${j.status}`}>{j.status}</span>
                   {j.progress > 0 && j.status === "running" && (
-                    <span className="text-muted" style={{ marginLeft: 6 }}>{j.progress}%</span>
+                    <span className="text-muted" style={{ marginLeft: 6 }}>
+                      {j.progress}%
+                    </span>
                   )}
                 </td>
                 <td className="text-muted">{timeAgo(j.created_at)}</td>
                 <td style={{ textAlign: "right" }}>
-                  <Link href={`/jobs/${j.id}`} className="btn btn-outline btn-sm" style={{ textDecoration: "none", marginRight: 8 }}>
+                  <Link
+                    href={`/jobs/${j.id}`}
+                    className="btn btn-outline btn-sm"
+                    style={{ textDecoration: "none", marginRight: 8 }}
+                  >
                     Ver
                   </Link>
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => deleteJob(j.id)}
                     disabled={deletingId === j.id || j.status === "running"}
-                    title={j.status === "running" ? "No se puede borrar un job en ejecucion" : undefined}
+                    title={
+                      j.status === "running"
+                        ? "No se puede borrar un trabajo en ejecución."
+                        : undefined
+                    }
                   >
                     {deletingId === j.id ? "Eliminando..." : "Eliminar"}
                   </button>
@@ -102,7 +112,7 @@ export default function JobsPage() {
             {jobs.length === 0 && !error && (
               <tr>
                 <td colSpan={4} style={{ textAlign: "center", padding: 24 }} className="text-muted">
-                  No hay jobs todavía.
+                  No hay trabajos todavía.
                 </td>
               </tr>
             )}

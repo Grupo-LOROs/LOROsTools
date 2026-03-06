@@ -109,7 +109,7 @@ export default function NewJobPage() {
       const job = await apiUpload<JobResult>(`/apps/${key}/jobs`, fd);
       router.push(`/jobs/${job.id}`);
     } catch (err: any) {
-      setError(err.message || "Error al crear job");
+      setError(err.message || "Error al crear el trabajo.");
     } finally {
       setSubmitting(false);
     }
@@ -126,7 +126,7 @@ export default function NewJobPage() {
       </p>
 
       <h1 style={{ fontSize: "1.3rem", marginBottom: 4 }}>{app?.name || key}</h1>
-      <p className="text-muted mb-4">Nuevo job &middot; modo batch</p>
+      <p className="text-muted mb-4">Nuevo trabajo &middot; modo batch</p>
 
       {error && <div className="error-msg">{error}</div>}
 
@@ -143,7 +143,7 @@ export default function NewJobPage() {
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
         >
-          Arrastra archivos aqui o haz clic para seleccionar
+          Arrastra archivos aquí o haz clic para seleccionar
         </div>
         <input
           ref={inputRef}
@@ -213,7 +213,7 @@ export default function NewJobPage() {
         onClick={submit}
         disabled={submitting}
       >
-        {submitting ? "Enviando..." : "Crear Job"}
+        {submitting ? "Enviando..." : "Crear trabajo"}
       </button>
     </>
   );

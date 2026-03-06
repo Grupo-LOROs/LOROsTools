@@ -23,7 +23,7 @@ class ChangePasswordRequest(BaseModel):
 
 def _validate_new_password(raw: str) -> None:
     if len(raw) < 8:
-        raise HTTPException(status_code=400, detail="La nueva contrasena debe tener al menos 8 caracteres")
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe tener al menos 8 caracteres")
 
 
 def _get_app_permissions(user: User, db: Session) -> list[str]:
@@ -40,7 +40,7 @@ def _get_app_permissions(user: User, db: Session) -> list[str]:
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = create_access_token(sub=user.username)
     app_permissions = _get_app_permissions(user, db)
@@ -97,12 +97,12 @@ def change_password(
     user: User = Depends(require_user),
 ):
     if not verify_password(payload.current_password, user.password_hash):
-        raise HTTPException(status_code=400, detail="Contrasena actual incorrecta")
+        raise HTTPException(status_code=400, detail="Contraseña actual incorrecta")
 
     _validate_new_password(payload.new_password)
 
     if verify_password(payload.new_password, user.password_hash):
-        raise HTTPException(status_code=400, detail="La nueva contrasena debe ser diferente")
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe ser diferente")
 
     user.password_hash = hash_password(payload.new_password)
     db.commit()

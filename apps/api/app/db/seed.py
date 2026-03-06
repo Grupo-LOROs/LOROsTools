@@ -39,7 +39,7 @@ APPS = [
     },
     {
         "key": "era_ventas_cotizador_catalogo",
-        "name": "ERA Ventas - Cotizador de catalogo",
+        "name": "ERA Ventas - Cotizador de catálogo",
         "unit": "era_ventas",
         "mode": "interactive",
         "ui_type": "next",
@@ -51,7 +51,7 @@ APPS = [
     },
     {
         "key": "era_compras_generador_ordenes_compra",
-        "name": "ERA Compras - Generador desde Ordenes de Compra",
+        "name": "ERA Compras - Generador desde Órdenes de Compra",
         "unit": "era_compras",
         "mode": "batch",
         "spec": {
@@ -64,7 +64,7 @@ APPS = [
     },
     {
         "key": "tesoreria_automatizacion_saldos",
-        "name": "Tesoreria - Automatizacion de Saldos",
+        "name": "Tesorería - Automatización de Saldos",
         "unit": "tesoreria",
         "mode": "batch",
         "spec": {
@@ -85,7 +85,7 @@ APPS = [
     },
     {
         "key": "tesoreria_generacion_conciliacion",
-        "name": "Tesoreria - Generacion de Conciliacion",
+        "name": "Tesorería - Generación de Conciliación",
         "unit": "tesoreria",
         "mode": "interactive",
         "ui_type": "next",

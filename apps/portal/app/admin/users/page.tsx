@@ -61,7 +61,6 @@ export default function AdminUsersPage() {
       router.push("/apps");
       return;
     }
-
     refreshData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, user, router]);
@@ -70,10 +69,7 @@ export default function AdminUsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const [u, a] = await Promise.all([
-        apiFetch<UserRow[]>("/users"),
-        apiFetch<AppRow[]>("/users/apps"),
-      ]);
+      const [u, a] = await Promise.all([apiFetch<UserRow[]>("/users"), apiFetch<AppRow[]>("/users/apps")]);
       setUsers(u);
       setApps(a);
 
@@ -87,7 +83,7 @@ export default function AdminUsersPage() {
       });
       setDrafts(nextDrafts);
     } catch (err: any) {
-      setError(err?.message || "No se pudo cargar la administracion de usuarios");
+      setError(err?.message || "No se pudo cargar la administración de usuarios.");
     } finally {
       setLoading(false);
     }
@@ -104,9 +100,7 @@ export default function AdminUsersPage() {
   }
 
   function toggleAppKey(current: string[], key: string) {
-    if (current.includes(key)) {
-      return current.filter((k) => k !== key);
-    }
+    if (current.includes(key)) return current.filter((k) => k !== key);
     return [...current, key];
   }
 
@@ -132,10 +126,10 @@ export default function AdminUsersPage() {
       setNewPassword("");
       setNewIsAdmin(false);
       setNewAppKeys([]);
-      setNotice("Usuario creado correctamente");
+      setNotice("Usuario creado correctamente.");
       await refreshData();
     } catch (err: any) {
-      setError(err?.message || "No se pudo crear el usuario");
+      setError(err?.message || "No se pudo crear el usuario.");
     } finally {
       setCreating(false);
     }
@@ -147,7 +141,6 @@ export default function AdminUsersPage() {
 
     setError(null);
     setNotice(null);
-
     try {
       await apiFetch(`/users/${username}/permissions`, {
         method: "PUT",
@@ -157,34 +150,32 @@ export default function AdminUsersPage() {
           app_keys: draft.is_admin ? [] : draft.app_keys,
         }),
       });
-      setNotice(`Permisos actualizados para ${username}`);
+      setNotice(`Permisos actualizados para ${username}.`);
       await refreshData();
     } catch (err: any) {
-      setError(err?.message || "No se pudieron guardar los permisos");
+      setError(err?.message || "No se pudieron guardar los permisos.");
     }
   }
 
   async function resetPassword(username: string) {
     const draft = drafts[username];
     if (!draft || !draft.new_password) {
-      setError("Captura una nueva contrasena para resetear");
+      setError("Captura una nueva contraseña para el reseteo.");
       return;
     }
 
     setError(null);
     setNotice(null);
-
     try {
       await apiFetch(`/users/${username}/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_password: draft.new_password }),
       });
-
       patchDraft(username, { new_password: "" });
-      setNotice(`Password reiniciado para ${username}`);
+      setNotice(`Contraseña reiniciada para ${username}.`);
     } catch (err: any) {
-      setError(err?.message || "No se pudo reiniciar el password");
+      setError(err?.message || "No se pudo reiniciar la contraseña.");
     }
   }
 
@@ -196,15 +187,12 @@ export default function AdminUsersPage() {
     setError(null);
     setNotice(null);
     setDeletingUser(username);
-
     try {
-      await apiFetch(`/users/${username}`, {
-        method: "DELETE",
-      });
-      setNotice(`Usuario ${username} eliminado`);
+      await apiFetch(`/users/${username}`, { method: "DELETE" });
+      setNotice(`Usuario ${username} eliminado.`);
       await refreshData();
     } catch (err: any) {
-      setError(err?.message || "No se pudo eliminar el usuario");
+      setError(err?.message || "No se pudo eliminar el usuario.");
     } finally {
       setDeletingUser(null);
     }
@@ -212,8 +200,8 @@ export default function AdminUsersPage() {
 
   return (
     <>
-      <h1 style={{ fontSize: "1.3rem", marginBottom: 12 }}>Administracion de usuarios</h1>
-      <p className="text-muted mb-4">Crea usuarios y asigna permisos por app.</p>
+      <h1 style={{ fontSize: "1.3rem", marginBottom: 12 }}>Administración de usuarios</h1>
+      <p className="text-muted mb-4">Crea usuarios y asigna permisos por aplicación.</p>
 
       {error && <div className="error-msg">{error}</div>}
       {notice && <div className="success-msg">{notice}</div>}
@@ -224,7 +212,7 @@ export default function AdminUsersPage() {
         <form onSubmit={createUser}>
           <div className="form-grid">
             <div className="form-group">
-              <label htmlFor="newUsername">Username</label>
+              <label htmlFor="newUsername">Usuario</label>
               <input
                 id="newUsername"
                 value={newUsername}
@@ -235,7 +223,7 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="form-group">
-              <label htmlFor="newPassword">Password inicial</label>
+              <label htmlFor="newPassword">Contraseña inicial</label>
               <input
                 id="newPassword"
                 type="password"
@@ -248,11 +236,7 @@ export default function AdminUsersPage() {
           </div>
 
           <label className="inline-check" style={{ marginBottom: 10 }}>
-            <input
-              type="checkbox"
-              checked={newIsAdmin}
-              onChange={(e) => setNewIsAdmin(e.target.checked)}
-            />
+            <input type="checkbox" checked={newIsAdmin} onChange={(e) => setNewIsAdmin(e.target.checked)} />
             <span>Es administrador</span>
           </label>
 
@@ -265,7 +249,7 @@ export default function AdminUsersPage() {
                     checked={newAppKeys.includes(a.key)}
                     onChange={() => setNewAppKeys((prev) => toggleAppKey(prev, a.key))}
                   />
-                  <span>{a.unit} � {a.name}</span>
+                  <span>{a.unit} - {a.name}</span>
                 </label>
               ))}
             </div>
@@ -315,9 +299,11 @@ export default function AdminUsersPage() {
                           <input
                             type="checkbox"
                             checked={d.app_keys.includes(a.key)}
-                            onChange={() => patchDraft(u.username, { app_keys: toggleAppKey(d.app_keys, a.key) })}
+                            onChange={() =>
+                              patchDraft(u.username, { app_keys: toggleAppKey(d.app_keys, a.key) })
+                            }
                           />
-                          <span>{a.unit} � {a.name}</span>
+                          <span>{a.unit} - {a.name}</span>
                         </label>
                       ))}
                     </div>
@@ -325,12 +311,12 @@ export default function AdminUsersPage() {
 
                   <div className="form-grid mb-4">
                     <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label htmlFor={`reset-${u.username}`}>Reset password</label>
+                      <label htmlFor={`reset-${u.username}`}>Reiniciar contraseña</label>
                       <input
                         id={`reset-${u.username}`}
                         type="password"
                         minLength={8}
-                        placeholder="Nueva contrasena"
+                        placeholder="Nueva contraseña"
                         value={d.new_password}
                         onChange={(e) => patchDraft(u.username, { new_password: e.target.value })}
                       />
@@ -339,7 +325,7 @@ export default function AdminUsersPage() {
 
                   <div className="button-row">
                     <button className="btn btn-outline" onClick={() => resetPassword(u.username)}>
-                      Reset password
+                      Reiniciar contraseña
                     </button>
                     <button className="btn btn-primary" onClick={() => savePermissions(u.username)}>
                       Guardar permisos
@@ -348,7 +334,7 @@ export default function AdminUsersPage() {
                       className="btn btn-danger"
                       onClick={() => deleteUser(u.username)}
                       disabled={deletingUser === u.username || user?.username === u.username}
-                      title={user?.username === u.username ? "No puedes borrar tu propio usuario" : undefined}
+                      title={user?.username === u.username ? "No puedes borrar tu propio usuario." : undefined}
                     >
                       {deletingUser === u.username ? "Eliminando..." : "Eliminar usuario"}
                     </button>

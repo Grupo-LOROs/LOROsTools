@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (!res.ok) {
-      throw new Error("Session expired");
+      throw new Error("La sesión expiró");
     }
 
     const body = await res.json();
@@ -105,7 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ username, password }),
     });
     const body = await res.json();
-    if (!res.ok) throw new Error(body?.detail || "Login failed");
+    if (!res.ok) throw new Error(body?.detail || "No se pudo iniciar sesión");
 
     persistAuth(body.token, {
       username: body.user.username,
@@ -144,7 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(body?.detail || "No se pudo cambiar la contrasena");
+      throw new Error(body?.detail || "No se pudo cambiar la contraseña");
     }
   }, []);
 

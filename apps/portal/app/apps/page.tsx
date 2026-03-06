@@ -19,7 +19,7 @@ const UNIT_LABELS: Record<string, string> = {
   era_ventas: "ERA Ventas",
   era_compras: "ERA Compras",
   era_proyectos: "ERA Proyectos",
-  tesoreria: "Tesoreria",
+  tesoreria: "Tesorería",
 };
 
 function resolveInteractiveHref(app: AppRow): string {
@@ -98,7 +98,7 @@ export default function AppsPage() {
                             className="btn btn-primary btn-sm"
                             style={{ textDecoration: "none" }}
                           >
-                            Nuevo Job
+                            Nuevo trabajo
                           </Link>
                         ) : a.mode === "interactive" && a.enabled ? (
                           isExternal ? (
