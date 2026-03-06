@@ -339,6 +339,16 @@ def _recommend_adjustments(
             credit_alt,
         )
 
+    if system.conservative_adj_pct > 5:
+        for conservative_adj in [max(0.0, system.conservative_adj_pct - d) for d in (2.5, 5.0)]:
+            system_alt = SystemInputs(**{**asdict(system), "conservative_adj_pct": conservative_adj})
+            add_recommendation(
+                f"Reducir ajuste conservador a {conservative_adj:.1f}%",
+                {"system.conservative_adj_pct": conservative_adj},
+                system_alt,
+                credit,
+            )
+
     order = {"AUTORIZABLE": 0, "AJUSTAR": 1, "NO AUTORIZABLE": 2}
     recs.sort(key=lambda x: (order.get(x.status, 9), -x.ica, x.monthly_payment))
     return recs[:max_recs]
