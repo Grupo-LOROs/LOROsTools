@@ -1,10 +1,11 @@
 """
 LOROsTools Worker
-─────────────────
+---------------
 Polls for queued jobs and dispatches them to the appropriate processor
 based on app_key. Each processor lives in processors/<app_key>.py.
 """
 
+import mimetypes
 import os
 import time
 import uuid
@@ -19,14 +20,11 @@ from processors import REGISTRY
 from processors.base import JobContext
 
 
-# ── Config ───────────────────────────────────────────────────
-
+# Config
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 FILES_ROOT = os.getenv("FILES_ROOT", "/data/files")
 POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "2"))
 
-
-# ── ORM (mirrors the API model — worker only needs read/write) ─
 
 class Base(DeclarativeBase):
     pass
@@ -51,13 +49,23 @@ class Job(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class JobFile(Base):
+    __tablename__ = "job_files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 
-# ── Dispatcher ───────────────────────────────────────────────
-
 def _build_context(job: Job, db: Session) -> JobContext:
-    """Build a JobContext for the given job, wiring up the progress callback."""
     files_root = Path(FILES_ROOT)
     job_dir = files_root / "jobs" / str(job.id)
 
@@ -66,7 +74,6 @@ def _build_context(job: Job, db: Session) -> JobContext:
         template_abs = (files_root / job.template_path).resolve()
 
     def report_progress(percent: int, message: str) -> None:
-        """Update job progress in DB (called from within a processor)."""
         job.progress = min(percent, 99)  # 100 is set only on completion
         job.message = message
         db.commit()
@@ -84,7 +91,6 @@ def _build_context(job: Job, db: Session) -> JobContext:
 
 
 def _process_job(job: Job, db: Session) -> str:
-    """Dispatch job to the correct processor. Returns relative output path."""
     processor_fn = REGISTRY.get(job.app_key)
 
     if processor_fn is None:
@@ -97,7 +103,42 @@ def _process_job(job: Job, db: Session) -> str:
     return processor_fn(ctx)
 
 
-# ── Main loop ────────────────────────────────────────────────
+def _rel_path(files_root: Path, abs_path: Path) -> str:
+    return abs_path.relative_to(files_root).as_posix()
+
+
+def _register_output_files(job: Job, out_rel: str, db: Session) -> str:
+    files_root = Path(FILES_ROOT).resolve()
+    output_dir = (files_root / "jobs" / str(job.id) / "output").resolve()
+
+    db.query(JobFile).filter(JobFile.job_id == job.id, JobFile.role == "output").delete()
+
+    output_files: list[Path] = []
+    if output_dir.exists():
+        output_files = sorted(p for p in output_dir.iterdir() if p.is_file())
+
+    for abs_path in output_files:
+        guessed_type = mimetypes.guess_type(abs_path.name)[0]
+        db.add(
+            JobFile(
+                job_id=job.id,
+                role="output",
+                filename=abs_path.name,
+                content_type=guessed_type,
+                size_bytes=abs_path.stat().st_size,
+                path=_rel_path(files_root, abs_path),
+            )
+        )
+
+    primary_abs = (files_root / out_rel).resolve()
+    if not primary_abs.exists() and output_files:
+        primary_abs = output_files[0]
+
+    if not primary_abs.exists():
+        raise FileNotFoundError("Processor completed but no output file was generated")
+
+    return _rel_path(files_root, primary_abs)
+
 
 def main() -> None:
     if not DATABASE_URL:
@@ -129,11 +170,11 @@ def main() -> None:
 
                 try:
                     out_rel = _process_job(job, db)
-                    job.output_path = out_rel
+                    job.output_path = _register_output_files(job, out_rel, db)
                     job.status = "succeeded"
                     job.progress = 100
                     job.message = "Completado"
-                    print(f"[worker] job {job.id} succeeded → {out_rel}")
+                    print(f"[worker] job {job.id} succeeded -> {job.output_path}")
                 except Exception as e:
                     job.status = "failed"
                     job.progress = 100

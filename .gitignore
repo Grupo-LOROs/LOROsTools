@@ -27,6 +27,7 @@ ENV/
 .ruff_cache/
 
 # --- node / next ---
+*.tsbuildinfo
 node_modules/
 .next/
 out/

@@ -28,12 +28,34 @@ function timeAgo(iso: string) {
 export default function JobsPage() {
   const [jobs, setJobs] = useState<JobRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
+  function loadJobs() {
     apiFetch<JobRow[]>("/jobs")
       .then(setJobs)
       .catch((e) => setError(e.message));
+  }
+
+  useEffect(() => {
+    loadJobs();
   }, []);
+
+  async function deleteJob(jobId: string) {
+    if (!confirm(`¿Eliminar job ${jobId}? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    setError(null);
+    setDeletingId(jobId);
+    try {
+      await apiFetch(`/jobs/${jobId}`, { method: "DELETE" });
+      await loadJobs();
+    } catch (e: any) {
+      setError(e?.message || "No se pudo eliminar el job");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <>
@@ -48,7 +70,7 @@ export default function JobsPage() {
               <th>App</th>
               <th>Status</th>
               <th>Creado</th>
-              <th style={{ width: 80 }}></th>
+              <th style={{ width: 180 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -63,9 +85,17 @@ export default function JobsPage() {
                 </td>
                 <td className="text-muted">{timeAgo(j.created_at)}</td>
                 <td style={{ textAlign: "right" }}>
-                  <Link href={`/jobs/${j.id}`} className="btn btn-outline btn-sm" style={{ textDecoration: "none" }}>
+                  <Link href={`/jobs/${j.id}`} className="btn btn-outline btn-sm" style={{ textDecoration: "none", marginRight: 8 }}>
                     Ver
                   </Link>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => deleteJob(j.id)}
+                    disabled={deletingId === j.id || j.status === "running"}
+                    title={j.status === "running" ? "No se puede borrar un job en ejecucion" : undefined}
+                  >
+                    {deletingId === j.id ? "Eliminando..." : "Eliminar"}
+                  </button>
                 </td>
               </tr>
             ))}

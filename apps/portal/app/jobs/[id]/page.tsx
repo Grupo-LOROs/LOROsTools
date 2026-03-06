@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
-import { apiFetch, apiDownload } from "@/lib/api";
+import { useParams, useRouter } from "next/navigation";
+import { apiDownload, apiFetch } from "@/lib/api";
 
 type JobDetail = {
   id: string;
@@ -18,11 +18,18 @@ type JobDetail = {
   updated_at: string;
 };
 
+type JobFileItem = {
+  id: number;
+  filename: string;
+  size_bytes: number | null;
+  role: string;
+};
+
 type JobFiles = {
   job_id: string;
-  inputs: Array<{ filename: string; size_bytes: number | null; role: string }>;
-  template: { filename: string; size_bytes: number | null } | null;
-  outputs: Array<{ filename: string; size_bytes: number | null }>;
+  inputs: JobFileItem[];
+  template: JobFileItem | null;
+  outputs: JobFileItem[];
 };
 
 function formatDate(iso: string) {
@@ -34,32 +41,43 @@ function formatDate(iso: string) {
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [job, setJob] = useState<JobDetail | null>(null);
   const [files, setFiles] = useState<JobFiles | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const [deleting, setDeleting] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch job + files
   function fetchJob() {
     apiFetch<JobDetail>(`/jobs/${id}`)
       .then((j) => {
         setJob(j);
-        // Stop polling when terminal
         if (j.status === "succeeded" || j.status === "failed") {
-          clearInterval(pollRef.current);
+          if (pollRef.current) clearInterval(pollRef.current);
         }
       })
       .catch((e) => setError(e.message));
   }
 
+  function fetchFiles() {
+    apiFetch<JobFiles>(`/jobs/${id}/files`)
+      .then(setFiles)
+      .catch(() => {});
+  }
+
   useEffect(() => {
     fetchJob();
-    apiFetch<JobFiles>(`/jobs/${id}/files`).then(setFiles).catch(() => {});
+    fetchFiles();
 
-    // Poll every 3s while running/queued
-    pollRef.current = setInterval(fetchJob, 3000);
-    return () => clearInterval(pollRef.current);
+    pollRef.current = setInterval(() => {
+      fetchJob();
+      fetchFiles();
+    }, 3000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -68,6 +86,28 @@ export default function JobDetailPage() {
   }
 
   const isTerminal = job?.status === "succeeded" || job?.status === "failed";
+
+  async function deleteJob() {
+    if (!job) return;
+    if (job.status === "running") {
+      setError("No se puede borrar un job en ejecucion");
+      return;
+    }
+    if (!confirm(`¿Eliminar job ${job.id}? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    setError(null);
+    setDeleting(true);
+    try {
+      await apiFetch(`/jobs/${job.id}`, { method: "DELETE" });
+      router.push("/jobs");
+    } catch (e: any) {
+      setError(e?.message || "No se pudo eliminar el job");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <>
@@ -83,13 +123,21 @@ export default function JobDetailPage() {
             <h1 style={{ fontSize: "1.3rem" }}>
               {job.app_key.replace(/_/g, " ")}
             </h1>
-            <span className={`badge badge-${job.status}`} style={{ fontSize: "0.85rem", padding: "4px 12px" }}>
-              {job.status}
-              {job.status === "running" && job.progress > 0 && ` ${job.progress}%`}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className={`badge badge-${job.status}`} style={{ fontSize: "0.85rem", padding: "4px 12px" }}>
+                {job.status}
+                {job.status === "running" && job.progress > 0 && ` ${job.progress}%`}
+              </span>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={deleteJob}
+                disabled={deleting || job.status === "running"}
+              >
+                {deleting ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
           </div>
 
-          {/* Progress bar for running jobs */}
           {job.status === "running" && (
             <div style={{ background: "var(--border)", borderRadius: 4, height: 6, marginBottom: 16 }}>
               <div
@@ -104,7 +152,6 @@ export default function JobDetailPage() {
             </div>
           )}
 
-          {/* Info card */}
           <div className="card mb-4">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 24px" }}>
               <div>
@@ -133,7 +180,6 @@ export default function JobDetailPage() {
             )}
           </div>
 
-          {/* Files */}
           {files && (
             <div className="card mb-4">
               <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>Archivos</h3>
@@ -160,11 +206,34 @@ export default function JobDetailPage() {
                   <div>{files.template.filename}</div>
                 </div>
               )}
+
+              {files.outputs.length > 0 && (
+                <div>
+                  <span className="text-muted">Outputs ({files.outputs.length})</span>
+                  <ul className="file-list">
+                    {files.outputs.map((f) => (
+                      <li key={f.id}>
+                        <span>
+                          {f.filename}
+                          {f.size_bytes != null && (
+                            <span className="text-muted"> ({(f.size_bytes / 1024).toFixed(0)} KB)</span>
+                          )}
+                        </span>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          onClick={() => apiDownload(`/jobs/${job.id}/files/${f.id}/download`, f.filename)}
+                        >
+                          Descargar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Download */}
-          {job.status === "succeeded" && job.output_path && (
+          {job.status === "succeeded" && job.output_path && (!files || files.outputs.length === 0) && (
             <button
               className="btn btn-primary"
               style={{ padding: "10px 32px", fontSize: "1rem" }}
@@ -177,17 +246,15 @@ export default function JobDetailPage() {
             </button>
           )}
 
-          {/* Error message */}
           {job.status === "failed" && (
             <div className="error-msg">
-              El job falló. {job.message || "Revisa los logs para más detalle."}
+              El job fallo. {job.message || "Revisa los logs para mas detalle."}
             </div>
           )}
 
-          {/* Polling indicator */}
           {!isTerminal && (
             <p className="text-muted mt-4" style={{ textAlign: "center" }}>
-              Actualizando automáticamente cada 3 segundos...
+              Actualizando automaticamente cada 3 segundos...
             </p>
           )}
         </>

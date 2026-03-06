@@ -1,4 +1,5 @@
 import uuid
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -105,3 +106,32 @@ def download_job_output(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=abs_path.name,
     )
+
+
+@router.delete("/{job_id}")
+def delete_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(require_user),
+):
+    job_uuid = _parse_uuid(job_id)
+    job = db.get(Job, job_uuid)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not user.is_admin and job.created_by != user.username:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if job.status == "running":
+        raise HTTPException(status_code=409, detail="No se puede borrar un job en ejecucion")
+
+    files_root = Path(settings.files_root).resolve()
+    job_dir = (files_root / "jobs" / str(job.id)).resolve()
+
+    db.delete(job)
+    db.commit()
+
+    if str(job_dir).startswith(str(files_root)) and job_dir.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    return {"ok": True}

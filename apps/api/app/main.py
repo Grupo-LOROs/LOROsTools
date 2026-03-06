@@ -12,6 +12,7 @@ from app.routes.apps import router as apps_router
 from app.routes.auth import router as auth_router
 from app.routes.jobs import router as jobs_router
 from app.routes import job_files
+from app.routes.users import router as users_router
 
 
 def _init_db() -> None:
@@ -49,7 +50,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed if allowed else [],
     allow_credentials=True,
-    allow_methods=["*"] ,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -60,6 +61,7 @@ def health():
 
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(users_router, prefix="/users", tags=["users"])
 app.include_router(apps_router, prefix="/apps", tags=["apps"])
 app.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
 app.include_router(job_files.router)

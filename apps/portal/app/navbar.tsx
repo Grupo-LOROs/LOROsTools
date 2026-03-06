@@ -18,6 +18,8 @@ export function NavBar() {
       <div className="navbar-links">
         <a href="/apps">Apps</a>
         <a href="/jobs">Mis Jobs</a>
+        {ready && user && <a href="/account/password">Mi Password</a>}
+        {ready && user?.is_admin && <a href="/admin/users">Usuarios</a>}
         {ready && user ? (
           <>
             <span className="text-muted" style={{ fontSize: "0.85rem" }}>{user.username}</span>

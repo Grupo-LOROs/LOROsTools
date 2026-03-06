@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import AppDefinition, Job, JobFile
+from app.db.models import AppDefinition, Job, JobFile, User, UserAppPermission
 from app.db.session import get_db
-from app.deps import require_user
+from app.deps import ensure_app_access, require_user
 
 router = APIRouter()
 
@@ -39,13 +39,96 @@ def _write_upload(root: Path, rel_path: str, f: UploadFile) -> tuple[str, int | 
     return rel_path, size
 
 
+def _ext(filename: str | None) -> str:
+    if not filename:
+        return ""
+    return Path(filename).suffix.lower()
+
+
+def _has_any_ext(files: list[UploadFile], allowed_exts: set[str]) -> bool:
+    return any(_ext(f.filename) in allowed_exts for f in files)
+
+
+def _ensure_all_ext(files: list[UploadFile], allowed_exts: set[str], detail: str) -> None:
+    for f in files:
+        if _ext(f.filename) not in allowed_exts:
+            raise HTTPException(status_code=400, detail=f"{detail}: {f.filename}")
+
+
+def _validate_tesoreria_saldos(inputs: list[UploadFile], template: UploadFile | None) -> None:
+    if not inputs:
+        raise HTTPException(status_code=400, detail="inputs are required (at least 1 PDF)")
+    if template is None:
+        raise HTTPException(
+            status_code=400,
+            detail="template is required for tesoreria_automatizacion_saldos",
+        )
+
+    _ensure_all_ext(inputs, {".pdf"}, "All inputs must be PDFs")
+    if _ext(template.filename) not in {".xlsx", ".xls"}:
+        raise HTTPException(status_code=400, detail=f"Template must be an Excel file. Got: {template.filename}")
+
+
+def _validate_era_compras_oc(inputs: list[UploadFile], template: UploadFile | None) -> None:
+    if not inputs:
+        raise HTTPException(status_code=400, detail="inputs are required (at least 1 PDF)")
+
+    _ensure_all_ext(inputs, {".pdf"}, "All inputs must be PDFs")
+
+    if template is None:
+        raise HTTPException(
+            status_code=400,
+            detail="template is required for era_compras_generador_ordenes_compra",
+        )
+    if _ext(template.filename) not in {".xlsx", ".xls"}:
+        raise HTTPException(status_code=400, detail=f"Template must be an Excel file. Got: {template.filename}")
+
+
+def _validate_era_ventas_comisionador(inputs: list[UploadFile], template: UploadFile | None) -> None:
+    if not inputs:
+        raise HTTPException(
+            status_code=400,
+            detail="inputs are required: base_comisiones (.xlsx) and schema (.xlsm as template or input)",
+        )
+
+    if not _has_any_ext(inputs, {".xlsx", ".xls"}):
+        raise HTTPException(status_code=400, detail="At least one Excel (.xlsx/.xls) input is required")
+
+    schema_in_inputs = _has_any_ext(inputs, {".xlsm"})
+    schema_in_template = template is not None and _ext(template.filename) == ".xlsm"
+    if not schema_in_inputs and not schema_in_template:
+        raise HTTPException(
+            status_code=400,
+            detail="Schema (.xlsm) is required as template or additional input",
+        )
+
+
+def _validate_era_proyectos_cfe(inputs: list[UploadFile], template: UploadFile | None) -> None:
+    if not inputs:
+        raise HTTPException(status_code=400, detail="inputs are required (at least 1 PDF)")
+
+    _ensure_all_ext(inputs, {".pdf"}, "All inputs must be PDFs")
+
+    if template is not None and _ext(template.filename) not in {".xlsx", ".xls"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Template must be an Excel file when provided. Got: {template.filename}",
+        )
+
+
 @router.get("")
 def list_apps(
     unit: str | None = None,
     db: Session = Depends(get_db),
-    user=Depends(require_user),
+    user: User = Depends(require_user),
 ):
     q = db.query(AppDefinition)
+
+    if not user.is_admin:
+        q = q.join(UserAppPermission, UserAppPermission.app_key == AppDefinition.key).filter(
+            UserAppPermission.user_id == user.id
+        )
+
     if unit:
         q = q.filter(AppDefinition.unit == unit)
 
@@ -65,10 +148,13 @@ def list_apps(
 
 
 @router.get("/{key}")
-def get_app(key: str, db: Session = Depends(get_db), user=Depends(require_user)):
+def get_app(key: str, db: Session = Depends(get_db), user: User = Depends(require_user)):
     app = db.get(AppDefinition, key)
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
+
+    ensure_app_access(user, app.key, db)
+
     return {
         "key": app.key,
         "name": app.name,
@@ -80,23 +166,6 @@ def get_app(key: str, db: Session = Depends(get_db), user=Depends(require_user))
     }
 
 
-# ── app-specific validators ────────────────────────────────────────────
-
-
-def _validate_tesoreria_saldos(inputs, template):
-    if not inputs or len(inputs) == 0:
-        raise HTTPException(status_code=400, detail="inputs are required (at least 1 PDF)")
-    if template is None:
-        raise HTTPException(status_code=400, detail="template is required for tesoreria_automatizacion_saldos")
-    for f in inputs:
-        name = (f.filename or "").lower()
-        if not name.endswith(".pdf"):
-            raise HTTPException(status_code=400, detail=f"All inputs must be PDFs. Got: {f.filename}")
-    tname = (template.filename or "").lower()
-    if not (tname.endswith(".xlsx") or tname.endswith(".xls")):
-        raise HTTPException(status_code=400, detail=f"Template must be an Excel file. Got: {template.filename}")
-
-
 @router.post("/{key}/jobs")
 async def create_job(
     key: str,
@@ -104,11 +173,13 @@ async def create_job(
     template: UploadFile | None = File(default=None),
     params_json: str | None = Form(default=None),
     db: Session = Depends(get_db),
-    user=Depends(require_user),
+    user: User = Depends(require_user),
 ):
     app = db.get(AppDefinition, key)
     if not app or not app.enabled:
         raise HTTPException(status_code=404, detail="App not found")
+
+    ensure_app_access(user, app.key, db)
 
     if app.mode != "batch":
         raise HTTPException(
@@ -116,13 +187,18 @@ async def create_job(
             detail="This app is interactive; it should be used from the portal UI.",
         )
 
-    # --- app-specific validation ---
+    # app-specific validation
     if app.key == "tesoreria_automatizacion_saldos":
         _validate_tesoreria_saldos(inputs, template)
 
-    if app.key == "tesoreria_generacion_conciliacion":
-        if not inputs or len(inputs) == 0:
-            raise HTTPException(status_code=400, detail="inputs are required (at least 1 PDF)")
+    if app.key == "era_compras_generador_ordenes_compra":
+        _validate_era_compras_oc(inputs, template)
+
+    if app.key == "era_ventas_comisionador":
+        _validate_era_ventas_comisionador(inputs, template)
+
+    if app.key == "era_proyectos_comisionador_cfe":
+        _validate_era_proyectos_cfe(inputs, template)
 
     # params
     params: dict[str, Any] = {}

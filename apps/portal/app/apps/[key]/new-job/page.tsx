@@ -18,6 +18,23 @@ type JobResult = {
   status: string;
 };
 
+type SpecInput = {
+  type: string;
+  role?: string;
+  multiple?: boolean;
+  optional?: boolean;
+};
+
+function toAccept(type: string | undefined): string | undefined {
+  if (!type) return undefined;
+  const clean = type.trim().toLowerCase();
+  if (!clean || clean === "file" || clean === "data") return undefined;
+  if (clean === "xlsx" || clean === "xls" || clean === "excel") return ".xlsx,.xls";
+  if (clean === "xlsm") return ".xlsm";
+  if (clean === "pdf") return ".pdf";
+  return clean.startsWith(".") ? clean : `.${clean}`;
+}
+
 export default function NewJobPage() {
   const { key } = useParams<{ key: string }>();
   const router = useRouter();
@@ -38,13 +55,22 @@ export default function NewJobPage() {
       .catch((e) => setError(e.message));
   }, [key]);
 
-  // ── Spec-based hints ──────────────────────────────────
-  const specInputs = app?.spec?.inputs as Array<{ type: string; role?: string; multiple?: boolean }> | undefined;
-  const needsTemplate = specInputs?.some((s) => s.role === "plantilla") ?? false;
-  const inputType = specInputs?.find((s) => !s.role)?.type || "file";
-  const acceptInput = inputType === "pdf" ? ".pdf" : undefined;
+  // Spec-based hints
+  const specInputs = app?.spec?.inputs as SpecInput[] | undefined;
+  const templateSpec = specInputs?.find((s) => {
+    const role = (s.role || "").toLowerCase();
+    return role === "plantilla" || role === "template" || role === "schema" || role === "esquema";
+  });
 
-  // ── Drag & drop ───────────────────────────────────────
+  const needsTemplate = Boolean(templateSpec) && !templateSpec?.optional;
+  const inputType = specInputs?.find((s) => !s.role)?.type || "file";
+  const acceptInput = toAccept(inputType);
+
+  const templateType = templateSpec?.type;
+  const acceptTemplate = toAccept(templateType) || ".xlsx,.xls,.xlsm";
+  const showTemplate = Boolean(templateSpec);
+
+  // Drag & drop
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -63,7 +89,6 @@ export default function NewJobPage() {
     setInputs((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  // ── Submit ────────────────────────────────────────────
   async function submit() {
     setError(null);
     if (inputs.length === 0) {
@@ -105,10 +130,9 @@ export default function NewJobPage() {
 
       {error && <div className="error-msg">{error}</div>}
 
-      {/* Inputs */}
       <div className="card mb-4">
         <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>
-          Archivos de entrada {inputType !== "file" && `(.${inputType})`}
+          Archivos de entrada {inputType !== "file" && `(${acceptInput || inputType})`}
         </h3>
 
         <div
@@ -119,7 +143,7 @@ export default function NewJobPage() {
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
         >
-          Arrastra archivos aquí o haz clic para seleccionar
+          Arrastra archivos aqui o haz clic para seleccionar
         </div>
         <input
           ref={inputRef}
@@ -146,8 +170,7 @@ export default function NewJobPage() {
         )}
       </div>
 
-      {/* Template */}
-      {(needsTemplate || true) && (
+      {showTemplate && (
         <div className="card mb-4">
           <h3 style={{ fontSize: "1rem", marginBottom: 12 }}>
             Plantilla (template) {needsTemplate ? "" : "(opcional)"}
@@ -171,7 +194,7 @@ export default function NewJobPage() {
               <input
                 ref={templateRef}
                 type="file"
-                accept=".xlsx,.xls"
+                accept={acceptTemplate}
                 style={{ display: "none" }}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
@@ -184,7 +207,6 @@ export default function NewJobPage() {
         </div>
       )}
 
-      {/* Submit */}
       <button
         className="btn btn-primary"
         style={{ padding: "10px 32px", fontSize: "1rem" }}

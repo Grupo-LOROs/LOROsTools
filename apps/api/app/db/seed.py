@@ -1,12 +1,12 @@
-import json
+import os
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
-from app.db.models import AppDefinition, User
+from app.db.models import AppDefinition, User, UserAppPermission
 
 
 DEFAULT_ADMIN_USER = "admin"
-DEFAULT_ADMIN_PASS = __import__("os").getenv("DEFAULT_ADMIN_PASS", "Biloros123")
+DEFAULT_ADMIN_PASS = os.getenv("DEFAULT_ADMIN_PASS", "Biloros123")
 
 
 # Canonical app registry (source of truth for the portal)
@@ -30,13 +30,16 @@ APPS = [
         "unit": "era_ventas",
         "mode": "batch",
         "spec": {
-            "inputs": [{"type": "pdf", "multiple": True}],
-            "outputs": [{"type": "xlsx"}],
+            "inputs": [
+                {"type": "xlsx", "multiple": False},
+                {"type": "xlsm", "multiple": False, "role": "schema"},
+            ],
+            "outputs": [{"type": "xlsx"}, {"type": "pdf"}],
         },
     },
     {
         "key": "era_ventas_cotizador_catalogo",
-        "name": "ERA Ventas - Cotizador de catálogo",
+        "name": "ERA Ventas - Cotizador de catalogo",
         "unit": "era_ventas",
         "mode": "interactive",
         "ui_type": "next",
@@ -48,34 +51,41 @@ APPS = [
     },
     {
         "key": "era_compras_generador_ordenes_compra",
-        "name": "ERA Compras - Generador desde Órdenes de Compra",
+        "name": "ERA Compras - Generador desde Ordenes de Compra",
         "unit": "era_compras",
         "mode": "batch",
         "spec": {
-            "inputs": [{"type": "xlsx", "multiple": False}],
+            "inputs": [
+                {"type": "pdf", "multiple": True},
+                {"type": "xlsx", "multiple": False, "role": "plantilla"},
+            ],
             "outputs": [{"type": "xlsx"}],
         },
     },
     {
         "key": "tesoreria_automatizacion_saldos",
-        "name": "Tesorería - Automatización de Saldos",
+        "name": "Tesoreria - Automatizacion de Saldos",
         "unit": "tesoreria",
         "mode": "batch",
         "spec": {
             "inputs": [
-                {"type": "pdf", "multiple": True, "banks": ["Santander", "Monex", "Bajio", "BBVA", "Banregio"]},
+                {
+                    "type": "pdf",
+                    "multiple": True,
+                    "banks": ["Santander", "Monex", "Bajio", "BBVA", "Banregio"],
+                },
                 {"type": "xlsx", "multiple": False, "role": "plantilla"},
             ],
             "outputs": [{"type": "xlsx"}],
             "notes": {
-                "account_number": "Se toma del archivo (nombre puede venir en mayúsculas).",
-                "movement_rule": "Agregar movimientos nuevos que no estén en la plantilla; persistir en BD.",
+                "account_number": "Se toma del archivo (nombre puede venir en mayusculas).",
+                "movement_rule": "Agregar movimientos nuevos que no esten en la plantilla; persistir en BD.",
             },
         },
     },
     {
         "key": "tesoreria_generacion_conciliacion",
-        "name": "Tesorería - Generación de Conciliación",
+        "name": "Tesoreria - Generacion de Conciliacion",
         "unit": "tesoreria",
         "mode": "interactive",
         "ui_type": "next",
@@ -101,7 +111,7 @@ APPS = [
 def seed(db: Session) -> None:
     """Idempotent seed."""
 
-    # --- admin user ---
+    # admin user
     admin = db.query(User).filter(User.username == DEFAULT_ADMIN_USER).first()
     if not admin:
         db.add(
@@ -113,7 +123,7 @@ def seed(db: Session) -> None:
         )
         db.commit()
 
-    # --- apps registry ---
+    # apps registry
     for a in APPS:
         existing = db.get(AppDefinition, a["key"])
         if not existing:
@@ -136,5 +146,24 @@ def seed(db: Session) -> None:
             existing.ui_type = a.get("ui_type")
             existing.ui_url = a.get("ui_url")
             existing.spec = a.get("spec", existing.spec)
+
+    db.commit()
+
+    # Backward compatibility:
+    # existing non-admin users with no explicit permissions keep access to all apps.
+    all_app_keys = sorted([a["key"] for a in APPS])
+    non_admin_users = db.query(User).filter(User.is_admin.is_(False)).all()
+
+    for user in non_admin_users:
+        current_count = (
+            db.query(UserAppPermission.id)
+            .filter(UserAppPermission.user_id == user.id)
+            .count()
+        )
+        if current_count > 0:
+            continue
+
+        for app_key in all_app_keys:
+            db.add(UserAppPermission(user_id=user.id, app_key=app_key))
 
     db.commit()

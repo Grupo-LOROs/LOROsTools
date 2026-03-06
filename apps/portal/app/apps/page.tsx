@@ -19,8 +19,16 @@ const UNIT_LABELS: Record<string, string> = {
   era_ventas: "ERA Ventas",
   era_compras: "ERA Compras",
   era_proyectos: "ERA Proyectos",
-  tesoreria: "Tesorería",
+  tesoreria: "Tesoreria",
 };
+
+function resolveInteractiveHref(app: AppRow): string {
+  const raw = app.ui?.url?.trim();
+  if (raw) {
+    return raw;
+  }
+  return `/apps/${app.key}/interactive`;
+}
 
 export default function AppsPage() {
   const [apps, setApps] = useState<AppRow[]>([]);
@@ -56,7 +64,7 @@ export default function AppsPage() {
               <colgroup>
                 <col />
                 <col style={{ width: 130 }} />
-                <col style={{ width: 110 }} />
+                <col style={{ width: 150 }} />
               </colgroup>
               <thead>
                 <tr>
@@ -66,43 +74,68 @@ export default function AppsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((a) => (
-                  <tr key={a.key}>
-                    <td>
-                      <strong>{a.name}</strong>
-                      {!a.enabled && (
-                        <span className="text-muted" style={{ marginLeft: 8 }}>
-                          (deshabilitada)
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      <span className={`badge badge-${a.mode}`}>{a.mode}</span>
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      {a.mode === "batch" && a.enabled ? (
-                        <Link
-                          href={`/apps/${a.key}/new-job`}
-                          className="btn btn-primary btn-sm"
-                          style={{ textDecoration: "none" }}
-                        >
-                          Nuevo Job
-                        </Link>
-                      ) : a.mode === "interactive" ? (
-                        <span
-                          className="badge"
-                          style={{
-                            background: "var(--bg-muted)",
-                            color: "var(--text-muted)",
-                            fontSize: "0.75rem",
-                          }}
-                        >
-                          Próximamente
-                        </span>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                {items.map((a) => {
+                  const interactiveHref = resolveInteractiveHref(a);
+                  const isExternal = interactiveHref.startsWith("http://") || interactiveHref.startsWith("https://");
+
+                  return (
+                    <tr key={a.key}>
+                      <td>
+                        <strong>{a.name}</strong>
+                        {!a.enabled && (
+                          <span className="text-muted" style={{ marginLeft: 8 }}>
+                            (deshabilitada)
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <span className={`badge badge-${a.mode}`}>{a.mode}</span>
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        {a.mode === "batch" && a.enabled ? (
+                          <Link
+                            href={`/apps/${a.key}/new-job`}
+                            className="btn btn-primary btn-sm"
+                            style={{ textDecoration: "none" }}
+                          >
+                            Nuevo Job
+                          </Link>
+                        ) : a.mode === "interactive" && a.enabled ? (
+                          isExternal ? (
+                            <a
+                              href={interactiveHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-primary btn-sm"
+                              style={{ textDecoration: "none" }}
+                            >
+                              Abrir
+                            </a>
+                          ) : (
+                            <Link
+                              href={interactiveHref}
+                              className="btn btn-primary btn-sm"
+                              style={{ textDecoration: "none" }}
+                            >
+                              Abrir
+                            </Link>
+                          )
+                        ) : (
+                          <span
+                            className="badge"
+                            style={{
+                              background: "var(--bg-muted)",
+                              color: "var(--text-muted)",
+                              fontSize: "0.75rem",
+                            }}
+                          >
+                            No disponible
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

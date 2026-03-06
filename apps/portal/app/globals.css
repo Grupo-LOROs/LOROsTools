@@ -10,6 +10,7 @@
 :root {
   --bg: #f8f9fa;
   --surface: #ffffff;
+  --bg-muted: #f1f5f9;
   --border: #e2e8f0;
   --text: #1a202c;
   --text-muted: #718096;
@@ -147,6 +148,18 @@ tbody tr:hover {
   background: #f1f5f9;
 }
 
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover {
+  background: #b91c1c;
+}
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn-sm {
   padding: 4px 10px;
   font-size: 0.82rem;
@@ -272,4 +285,62 @@ tbody tr:hover {
 .text-muted {
   color: var(--text-muted);
   font-size: 0.85rem;
+}
+
+.success-msg {
+  background: #dcfce7;
+  color: #166534;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.permission-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.stack-lg > * + * {
+  margin-top: 14px;
+}
+
+.card-soft {
+  border-color: #dbe5f0;
+  background: #fcfdff;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .permission-list {
+    grid-template-columns: 1fr;
+  }
 }
