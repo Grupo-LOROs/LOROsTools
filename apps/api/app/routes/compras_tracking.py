@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
@@ -11,7 +12,8 @@ import openpyxl
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.db.models import AppDefinition, User
+from app.core.config import settings
+from app.db.models import AppDefinition, Job, JobFile, User
 from app.db.session import get_db
 from app.deps import ensure_app_access, require_user
 
@@ -24,6 +26,26 @@ except Exception:
 router = APIRouter(prefix="/tools/compras/importaciones-tracking", tags=["tools-compras-tracking"])
 
 TRACKING_APP_KEY = "era_compras_seguimiento_importaciones"
+IMPORTACIONES_SOURCE_APP_KEY = "era_importaciones_generador_oc"
+UPLOAD_PREFIX_RX = re.compile(r"^\d{2,3}-(?P<name>.+)$")
+STOP_BLOCK_MARKERS = (
+    "CONSIGNEE",
+    "IMPORTER",
+    "IMPORTADOR",
+    "TO INVOICE",
+    "PACKING LIST",
+    "PORT ",
+    "VESSEL",
+    "COUNTRY OF ORIGIN",
+    "PAIS DE ORIGEN",
+    "INCOTERM",
+    "TERMS OF DELIVERY",
+    "MARKS",
+    "DESCRIPTION OF GOODS",
+    "FLETE",
+    "TYPE OF CONTAINER",
+    "TIPE OF CONTAINER",
+)
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "order_number": ("no po", "po", "orden de compra", "pedido", "folio", "no. po"),
@@ -92,6 +114,8 @@ class ShipmentTracking:
     current_stage: str | None = None
     status: str | None = None
     comments: str | None = None
+    source_updated_at: str | None = None
+    has_operational_data: bool = False
     progress_pct: int = 0
     stage_label: str = "Pendiente"
     milestones: list[TrackingMilestone] = field(default_factory=list)
@@ -124,13 +148,15 @@ def _to_iso_date(value: Any) -> str | None:
         return value.isoformat()
 
     raw = str(value).strip().replace("/", "-").replace(".", "-")
+    raw = re.sub(r"\s*-\s*", "-", raw)
+    raw = " ".join(raw.split())
     for fmt in ("%d-%m-%Y", "%m-%d-%Y", "%Y-%m-%d"):
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except ValueError:
             pass
 
-    month_match = __import__("re").search(r"\b(\d{1,2})-([A-Za-z]{3})-?(20\d{2})\b", raw)
+    month_match = re.search(r"\b(\d{1,2})-([A-Za-z]{3})-?(20\d{2})\b", raw)
     if month_match:
         day, month, year = month_match.groups()
         months = {
@@ -180,9 +206,176 @@ def _clean_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line and line.strip()]
 
 
-def _parse_order_pdf(path: Path) -> ShipmentTracking:
-    import re
+def _line_value_after_label(line: str, labels: tuple[str, ...]) -> str | None:
+    normalized = line.strip()
+    for label in labels:
+        pattern = rf"^{label}\s*[:.]?\s*(.+)$"
+        match = re.match(pattern, normalized, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" :.-")
+            if value:
+                return value
+            return None
+    return None
 
+
+def _extract_labeled_value(lines: list[str], labels: tuple[str, ...], max_lookahead: int = 3) -> str | None:
+    for index, line in enumerate(lines):
+        inline_value = _line_value_after_label(line, labels)
+        if inline_value:
+            return inline_value
+
+        if not any(re.match(rf"^{label}\s*[:.]?$", line.strip(), re.IGNORECASE) for label in labels):
+            continue
+
+        for candidate in lines[index + 1 : index + 1 + max_lookahead]:
+            value = candidate.strip(" :.-")
+            if value:
+                return value
+    return None
+
+
+def _extract_labeled_block(lines: list[str], labels: tuple[str, ...], max_lines: int = 5) -> list[str]:
+    for index, line in enumerate(lines):
+        if not any(label in line.upper() for label in labels):
+            continue
+
+        tail = re.sub(r"^EXPORTER\s*(\([^)]*\))?\s*", "", line, flags=re.IGNORECASE)
+        tail = re.sub(r"^PROVEEDOR\s*:?\s*", "", tail, flags=re.IGNORECASE)
+        tail = tail.strip(" :.-")
+        block = [tail] if tail else []
+
+        for candidate in lines[index + 1 : index + 1 + max_lines]:
+            value = candidate.strip()
+            if not value:
+                break
+            if any(value.upper().startswith(marker) for marker in STOP_BLOCK_MARKERS):
+                break
+            block.append(value)
+
+        return block
+    return []
+
+
+def _extract_supplier_name(lines: list[str], labels: tuple[str, ...]) -> str | None:
+    for index, line in enumerate(lines):
+        upper = line.upper()
+        if not any(label in upper for label in labels):
+            continue
+
+        tail = re.sub(r"^EXPORTER\s*(\([^)]*\))?\s*", "", line, flags=re.IGNORECASE).strip(" :.-")
+        if tail and tail.upper() not in labels:
+            return tail
+
+        for candidate in lines[index + 1 : index + 4]:
+            value = candidate.strip()
+            if value and value.upper() not in labels:
+                return value
+    return None
+
+
+def _extract_invoice_from_lines(lines: list[str]) -> tuple[str | None, str | None]:
+    invoice_labels = ("INVOICE\\s+NO", "INVOICE\\s+NUMBER", "FACTURA\\s+NO")
+
+    for index, line in enumerate(lines):
+        if "TO INVOICE NO. DATE" not in line.upper():
+            continue
+        candidate = lines[index + 1] if index + 1 < len(lines) else ""
+        match = re.search(
+            r"([A-Z0-9-]{4,})\s+(\d{1,2}-[A-Z]{3}-?20\d{2}|\d{1,2}[/-]\d{1,2}[/-]20\d{2})$",
+            candidate,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip(), _to_iso_date(match.group(2))
+
+    for index, line in enumerate(lines):
+        inline_value = _line_value_after_label(line, invoice_labels)
+        if inline_value:
+            date_value = None
+            for candidate in lines[index : index + 4]:
+                extracted = _line_value_after_label(candidate, ("DATE",))
+                if extracted:
+                    date_value = extracted
+                    break
+            if date_value is None:
+                date_value = _extract_labeled_value(lines[index : index + 4], ("DATE",), max_lookahead=2)
+            return inline_value, _to_iso_date(date_value)
+
+        if re.match(r"^INVOICE\s+NO\s*[:.]?$", line.strip(), re.IGNORECASE):
+            invoice_value = _extract_labeled_value(lines[index : index + 4], ("INVOICE\\s+NO",), max_lookahead=2)
+            date_value = _extract_labeled_value(lines[index : index + 6], ("DATE",), max_lookahead=2)
+            return invoice_value, _to_iso_date(date_value)
+
+    filename_match = re.search(r"\b(\d{2}[A-Z]\d{2}(?:[+/_-]\d{2})?)\b", " ".join(lines[:10]).upper())
+    if filename_match:
+        return filename_match.group(1).replace("_", "+"), None
+
+    return None, None
+
+
+def _extract_supplier_from_lines(lines: list[str]) -> str | None:
+    supplier_block = _extract_labeled_block(lines, ("EXPORTER", "PROVEEDOR"))
+    if supplier_block:
+        return supplier_block[0]
+
+    supplier_name = _extract_supplier_name(lines, ("EXPORTER",))
+    if supplier_name:
+        return supplier_name
+
+    for index, line in enumerate(lines):
+        if "PACKING LIST" not in line.upper():
+            continue
+        if index > 0:
+            candidate = lines[index - 1].strip()
+            if candidate and "PACKING LIST" not in candidate.upper():
+                return candidate
+        break
+    return None
+
+
+def _extract_ports_from_lines(lines: list[str]) -> tuple[str | None, str | None]:
+    origin_port = None
+    destination_port = None
+
+    for index, line in enumerate(lines):
+        if line.upper() == "FROM" and index + 1 < len(lines):
+            candidate = lines[index + 1].strip()
+            if "," in candidate:
+                origin_port = candidate
+        if "TERMS OF DELIVERY" in line.upper():
+            for follow_index in range(index + 1, min(index + 5, len(lines))):
+                if lines[follow_index].upper() == "TO" and follow_index + 1 < len(lines):
+                    candidate = lines[follow_index + 1].strip()
+                    if "," in candidate:
+                        destination_port = candidate
+                        break
+
+    if not origin_port:
+        from_value = _extract_labeled_value(lines, ("FROM",), max_lookahead=2)
+        if from_value and "," in from_value:
+            origin_port = from_value
+    if not destination_port:
+        to_value = _extract_labeled_value(lines, ("PORT OF DISCHARGE", "TO"), max_lookahead=2)
+        if to_value and "," in to_value:
+            destination_port = to_value
+
+    return origin_port, destination_port
+
+
+def _source_name(path: Path) -> str:
+    match = UPLOAD_PREFIX_RX.match(path.stem)
+    return match.group("name") if match else path.stem
+
+
+def _fallback_identifier(path: Path) -> str | None:
+    match = re.search(r"\b(\d{2}[A-Z]\d{2}(?:[+/_-]\d{2})?)\b", _source_name(path).upper())
+    if not match:
+        return None
+    return match.group(1).replace("_", "+").replace("-", "+", 1) if "_" in match.group(1) else match.group(1)
+
+
+def _parse_order_pdf(path: Path) -> ShipmentTracking:
     text = _extract_pdf_text(path)
     lines = _clean_lines(text)
 
@@ -199,15 +392,25 @@ def _parse_order_pdf(path: Path) -> ShipmentTracking:
     if general_match:
         shipment.general_po = general_match.group(1).strip()
 
-    date_match = re.search(r"DATE:\s*(\d{1,2}[./-]\d{1,2}[./-]20\d{2})", text, re.IGNORECASE)
-    shipment.order_date = _to_iso_date(date_match.group(1)) if date_match else None
+    invoice_number, invoice_date = _extract_invoice_from_lines(lines)
+    if invoice_number:
+        shipment.invoice_number = invoice_number
+        if shipment.order_number is None:
+            shipment.order_number = invoice_number
+        if shipment.order_date is None:
+            shipment.order_date = invoice_date
+
+    if shipment.order_date is None:
+        date_value = _extract_labeled_value(lines, ("DATE",), max_lookahead=2)
+        shipment.order_date = _to_iso_date(date_value)
 
     provider_match = re.search(r"PROVE?DOR\s+([A-Z/& ]+)", text, re.IGNORECASE)
     if provider_match:
         shipment.supplier_display = provider_match.group(1).strip()
 
+    shipment.supplier_name = _extract_supplier_from_lines(lines)
     supplier_match = re.search(r"TOTAL,\s*USD\s*\$?[\d,]+\.\d{2}\s+([A-Z][A-Z0-9 .,&/-]{3,})\s+PAIS DE ORIGEN", text, re.IGNORECASE | re.DOTALL)
-    if supplier_match:
+    if supplier_match and not shipment.supplier_name:
         shipment.supplier_name = " ".join(supplier_match.group(1).split())
 
     incoterm_match = re.search(r"INCOTERM:\s*([A-Z0-9]+)", text, re.IGNORECASE)
@@ -217,21 +420,40 @@ def _parse_order_pdf(path: Path) -> ShipmentTracking:
     total_match = re.search(r"TOTAL,\s*USD\s*\$?([\d,]+\.\d{2})", text, re.IGNORECASE)
     shipment.total_usd = _to_float(total_match.group(1)) if total_match else None
 
-    origin_match = re.search(
-        r"PORT\s+OR\s+LOADING:\s*(.+?)(?:\s+PORT\s+OF\s+DISCHARGE:|$)",
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if origin_match:
-        shipment.origin_port = " ".join(origin_match.group(1).split())
+    line_origin = _extract_labeled_value(lines, ("PORT\\s+OF\\s+LOADING", "PORT\\s+OR\\s+LOADING"), max_lookahead=1)
+    if line_origin:
+        shipment.origin_port = line_origin
+    else:
+        origin_match = re.search(
+            r"PORT\s+OR\s+LOADING:\s*(.+?)(?:\s+PORT\s+OF\s+DISCHARGE:|$)",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if origin_match:
+            shipment.origin_port = " ".join(origin_match.group(1).split())
 
-    destination_match = re.search(
-        r"PORT\s+OF\s+DISCHARGE:\s*(.+?)(?:\s+TIPE\s+OF\s+CONTAINER:|\s+TYPE\s+OF\s+CONTAINER:|$)",
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if destination_match:
-        shipment.destination_port = " ".join(destination_match.group(1).split())
+    line_destination = _extract_labeled_value(lines, ("PORT\\s+OF\\s+DISCHARGE",), max_lookahead=1)
+    if line_destination:
+        shipment.destination_port = line_destination
+    else:
+        destination_match = re.search(
+            r"PORT\s+OF\s+DISCHARGE:\s*(.+?)(?:\s+TIPE\s+OF\s+CONTAINER:|\s+TYPE\s+OF\s+CONTAINER:|$)",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if destination_match:
+            shipment.destination_port = " ".join(destination_match.group(1).split())
+
+    if not shipment.origin_port or not shipment.destination_port:
+        fallback_origin, fallback_destination = _extract_ports_from_lines(lines)
+        shipment.origin_port = shipment.origin_port or fallback_origin
+        shipment.destination_port = shipment.destination_port or fallback_destination
+
+    if not shipment.origin_port or not shipment.destination_port:
+        vessel_match = re.search(r"VESSEL\s+([A-ZÁÉÍÓÚ ,.-]+)\s+TO\s+([A-ZÁÉÍÓÚ ,.-]+)", text.upper(), re.IGNORECASE)
+        if vessel_match:
+            shipment.origin_port = shipment.origin_port or " ".join(vessel_match.group(1).split())
+            shipment.destination_port = shipment.destination_port or " ".join(vessel_match.group(2).split())
 
     for attr, pattern in (
         ("start_production", r"Start\s+of\s+the\s+production:\s*([0-9./-]{8,10})"),
@@ -266,7 +488,12 @@ def _parse_order_pdf(path: Path) -> ShipmentTracking:
         except StopIteration:
             pass
 
-    shipment.id = shipment.order_number or shipment.general_po or path.stem
+    if not shipment.order_number and shipment.invoice_number:
+        shipment.order_number = shipment.invoice_number
+    if not shipment.order_number:
+        shipment.order_number = _fallback_identifier(path)
+
+    shipment.id = shipment.order_number or shipment.general_po or _source_name(path)
     return shipment
 
 
@@ -405,6 +632,7 @@ def _enrich_status(shipment: ShipmentTracking) -> None:
 
 
 def _merge_operations(shipment: ShipmentTracking, ops: dict[str, Any]) -> ShipmentTracking:
+    shipment.has_operational_data = True
     if ops.get("supplier_display"):
         shipment.supplier_display = str(ops["supplier_display"]).strip()
     if ops.get("status"):
@@ -430,6 +658,21 @@ def _shipment_identifiers(item: ShipmentTracking | dict[str, Any]) -> list[str]:
         if value:
             values.append(str(value).strip().upper())
     return list(dict.fromkeys(values))
+
+
+def _latest_tracking_date(shipment: ShipmentTracking) -> str:
+    actual_dates = [
+        shipment.warehouse_arrival,
+        shipment.customs_release,
+        shipment.port_arrival,
+        shipment.eta,
+        shipment.etd,
+        shipment.order_date,
+    ]
+    resolved_dates = [value for value in actual_dates if value]
+    if resolved_dates:
+        return max(resolved_dates)
+    return shipment.source_updated_at or "0000-00-00"
 
 
 def _merge_tracking_data(pdf_shipments: list[ShipmentTracking], operations_rows: list[dict[str, Any]]) -> tuple[list[ShipmentTracking], int]:
@@ -469,11 +712,54 @@ def _merge_tracking_data(pdf_shipments: list[ShipmentTracking], operations_rows:
 
     shipments.sort(
         key=lambda item: (
-            item.eta or item.port_arrival or "9999-99-99",
+            _latest_tracking_date(item),
             item.order_number or item.general_po or item.id,
-        )
+        ),
+        reverse=True,
     )
     return shipments, unmatched
+
+
+def _load_importaciones_history(db: Session, user: User) -> list[ShipmentTracking]:
+    files_root = Path(settings.files_root).resolve()
+
+    query = (
+        db.query(JobFile, Job)
+        .join(Job, Job.id == JobFile.job_id)
+        .filter(
+            Job.app_key == IMPORTACIONES_SOURCE_APP_KEY,
+            Job.status == "succeeded",
+            JobFile.role == "input",
+        )
+        .order_by(Job.created_at.desc(), JobFile.created_at.desc())
+    )
+    if not user.is_admin:
+        query = query.filter(Job.created_by == user.username)
+
+    latest_by_identifier: dict[str, ShipmentTracking] = {}
+
+    for job_file, job in query.all():
+        if not job_file.filename.lower().endswith(".pdf"):
+            continue
+        abs_path = (files_root / job_file.path).resolve()
+        if not abs_path.exists():
+            continue
+        shipment = _parse_order_pdf(abs_path)
+        shipment.source = "importaciones-history"
+        shipment.source_updated_at = job.created_at.isoformat() if job.created_at else None
+        identifiers = _shipment_identifiers(shipment)
+        if not identifiers:
+            identifiers = [shipment.id]
+        if any(identifier in latest_by_identifier for identifier in identifiers):
+            continue
+        for identifier in identifiers:
+            latest_by_identifier[identifier] = shipment
+
+    unique_shipments: dict[str, ShipmentTracking] = {}
+    for shipment in latest_by_identifier.values():
+        unique_shipments[shipment.id] = shipment
+
+    return list(unique_shipments.values())
 
 
 def _save_upload(path: Path, upload: UploadFile) -> Path:
@@ -484,9 +770,10 @@ def _save_upload(path: Path, upload: UploadFile) -> Path:
 
 @router.post("/analyze")
 async def analyze_import_tracking(
-    order_pdfs: list[UploadFile] = File(...),
+    order_pdfs: list[UploadFile] | None = File(default=None),
     operations_file: UploadFile | None = File(default=None),
     stage_hint: str | None = Form(default=None),
+    use_importaciones_history: bool = Form(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ):
@@ -496,19 +783,22 @@ async def analyze_import_tracking(
 
     ensure_app_access(user, TRACKING_APP_KEY, db)
 
-    if not order_pdfs:
+    manual_pdfs = [item for item in (order_pdfs or []) if item.filename]
+    if not manual_pdfs and not use_importaciones_history:
         raise HTTPException(status_code=400, detail="Debes subir al menos un PDF de orden de compra.")
 
     with tempfile.TemporaryDirectory(prefix="compras-tracking-") as temp_dir:
         temp_root = Path(temp_dir)
         pdf_paths: list[Path] = []
-        for idx, uploaded in enumerate(order_pdfs):
+        for idx, uploaded in enumerate(manual_pdfs):
             filename = Path(uploaded.filename or f"order_{idx}.pdf").name
             if filename.lower().endswith(".pdf") is False:
                 raise HTTPException(status_code=400, detail=f"Archivo inválido: {filename}. Solo se aceptan PDFs.")
             pdf_paths.append(_save_upload(temp_root / f"{idx:03d}-{filename}", uploaded))
 
         shipments = [_parse_order_pdf(path) for path in pdf_paths]
+        if use_importaciones_history:
+            shipments.extend(_load_importaciones_history(db, user))
 
         operations_rows: list[dict[str, Any]] = []
         if operations_file is not None:
@@ -526,7 +816,7 @@ async def analyze_import_tracking(
 
     summary = {
         "shipments": len(merged),
-        "with_operations": len([item for item in merged if item.source != "pdf" or item.comments or item.status or item.current_stage]),
+        "with_operations": len([item for item in merged if item.has_operational_data]),
         "arrived_port": len([item for item in merged if item.port_arrival]),
         "customs_released": len([item for item in merged if item.customs_release]),
         "warehouse_arrived": len([item for item in merged if item.warehouse_arrival]),

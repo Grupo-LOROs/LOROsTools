@@ -39,6 +39,7 @@ type Shipment = {
   current_stage: string | null;
   status: string | null;
   comments: string | null;
+  source_updated_at?: string | null;
   progress_pct: number;
   stage_label: string;
   milestones: TrackingMilestone[];
@@ -100,6 +101,7 @@ export default function ComprasTrackingPage() {
 
   const [orderPdfs, setOrderPdfs] = useState<File[]>([]);
   const [operationsFile, setOperationsFile] = useState<File | null>(null);
+  const [useHistory, setUseHistory] = useState(true);
   const [dragActive, setDragActive] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,8 +114,8 @@ export default function ComprasTrackingPage() {
   );
 
   async function analyze() {
-    if (!orderPdfs.length) {
-      setError("Debes subir al menos un PDF de orden de compra.");
+    if (!orderPdfs.length && !useHistory) {
+      setError("Debes subir al menos un PDF o activar el historial de Importaciones.");
       return;
     }
 
@@ -125,6 +127,7 @@ export default function ComprasTrackingPage() {
       if (operationsFile) {
         formData.append("operations_file", operationsFile);
       }
+      formData.append("use_importaciones_history", String(useHistory));
       const data = await apiUpload<AnalysisResponse>("/tools/compras/importaciones-tracking/analyze", formData);
       setAnalysis(data);
       setSelectedId(data.shipments[0]?.id || null);
@@ -218,6 +221,10 @@ export default function ComprasTrackingPage() {
               ))}
             </div>
           ) : null}
+          <label className="inline-check" style={{ marginTop: 14 }}>
+            <input type="checkbox" checked={useHistory} onChange={(event) => setUseHistory(event.target.checked)} />
+            <span>Usar historial de la herramienta de Importaciones</span>
+          </label>
         </div>
 
         <div className="stack-lg">
@@ -263,9 +270,13 @@ export default function ComprasTrackingPage() {
               <span className="trk-mini-label">Operativo</span>
               <strong>{operationsFile ? "Sí" : "No"}</strong>
             </div>
+            <div className="trk-mini-card">
+              <span className="trk-mini-label">Historial</span>
+              <strong>{useHistory ? "Activo" : "Manual"}</strong>
+            </div>
           </div>
 
-          <button className="btn btn-primary" type="button" disabled={processing || !orderPdfs.length} onClick={analyze}>
+          <button className="btn btn-primary" type="button" disabled={processing || (!orderPdfs.length && !useHistory)} onClick={analyze}>
             {processing ? "Analizando..." : "Generar seguimiento"}
           </button>
         </div>
@@ -300,6 +311,9 @@ export default function ComprasTrackingPage() {
             <aside className="trk-sidebar">
               <div className="card">
                 <div className="trk-panel-title mb-4">Embarques detectados</div>
+                <div className="gi-helper" style={{ marginBottom: 16 }}>
+                  Más recientes arriba.
+                </div>
                 <div className="trk-list">
                   {analysis.shipments.map((shipment) => (
                     <button
