@@ -84,6 +84,22 @@ def _validate_era_compras_oc(inputs: list[UploadFile], template: UploadFile | No
         raise HTTPException(status_code=400, detail=f"Template must be an Excel file. Got: {template.filename}")
 
 
+def _validate_era_importaciones_oc(inputs: list[UploadFile], template: UploadFile | None) -> None:
+    if not inputs:
+        raise HTTPException(status_code=400, detail="inputs are required (at least 1 PDF)")
+
+    _ensure_all_ext(inputs, {".pdf"}, "All inputs must be PDFs")
+
+    if template is None:
+        raise HTTPException(
+            status_code=400,
+            detail="template is required for era_importaciones_generador_oc",
+        )
+
+    if _ext(template.filename) not in {".xlsx", ".xls", ".xlsm"}:
+        raise HTTPException(status_code=400, detail=f"Template must be an Excel file. Got: {template.filename}")
+
+
 def _validate_era_ventas_comisionador(inputs: list[UploadFile], template: UploadFile | None) -> None:
     if not inputs:
         raise HTTPException(
@@ -193,6 +209,9 @@ async def create_job(
 
     if app.key == "era_compras_generador_ordenes_compra":
         _validate_era_compras_oc(inputs, template)
+
+    if app.key == "era_importaciones_generador_oc":
+        _validate_era_importaciones_oc(inputs, template)
 
     if app.key == "era_ventas_comisionador":
         _validate_era_ventas_comisionador(inputs, template)

@@ -633,6 +633,171 @@ tbody tr:hover {
   overflow: auto;
 }
 
+.imp-hero {
+  position: relative;
+  overflow: hidden;
+  border: none;
+  color: #fff;
+  background: linear-gradient(135deg, #0f172a 0%, #0f766e 50%, #f59e0b 100%);
+}
+
+.imp-hero::after {
+  content: "";
+  position: absolute;
+  right: -72px;
+  top: -72px;
+  width: 220px;
+  height: 220px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.imp-kicker {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.imp-hero-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.imp-hero h1 {
+  font-size: 1.65rem;
+  line-height: 1.1;
+}
+
+.imp-hero-copy {
+  max-width: 58ch;
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.imp-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.imp-step {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
+}
+
+.imp-step strong,
+.imp-step span {
+  display: block;
+}
+
+.imp-step span {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.92rem;
+}
+
+.imp-layout {
+  display: grid;
+  grid-template-columns: 350px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.imp-sidebar {
+  display: grid;
+  gap: 16px;
+  position: sticky;
+  top: 72px;
+}
+
+.imp-panel-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.imp-dropzone {
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+  border-color: #fdba74;
+}
+
+.imp-drop-title {
+  margin-bottom: 6px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.imp-template {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.imp-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.imp-mini-stat {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.imp-mini-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.imp-mini-value {
+  margin-top: 4px;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.imp-note {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.imp-checklist {
+  display: grid;
+  gap: 10px;
+}
+
+.imp-check {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
 @media (max-width: 900px) {
   .form-grid {
     grid-template-columns: 1fr;
@@ -646,15 +811,24 @@ tbody tr:hover {
   .gi-layout,
   .gi-kpis,
   .gi-summary,
-  .gi-status-strip {
+  .gi-status-strip,
+  .imp-hero-grid,
+  .imp-layout,
+  .imp-summary {
     grid-template-columns: 1fr;
   }
 
-  .gi-sidebar {
+  .gi-sidebar,
+  .imp-sidebar {
     position: static;
   }
 
   .gi-field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .imp-template {
+    align-items: start;
+    flex-direction: column;
   }
 }

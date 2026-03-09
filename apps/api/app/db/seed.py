@@ -63,6 +63,25 @@ APPS = [
         },
     },
     {
+        "key": "era_importaciones_generador_oc",
+        "name": "ERA Importaciones - Generador de órdenes de compra",
+        "unit": "era_importaciones",
+        "mode": "batch",
+        "ui_type": "next",
+        "ui_url": "/tools/era/importaciones/generador-oc",
+        "spec": {
+            "inputs": [
+                {"type": "pdf", "multiple": True},
+                {"type": "xlsx", "multiple": False, "role": "plantilla"},
+            ],
+            "outputs": [{"type": "xlsx"}, {"type": "pdf"}],
+            "notes": {
+                "template": "Sube el archivo de programación de entregas en Excel.",
+                "behavior": "Actualiza la hoja de programación y genera una orden de compra PDF por documento.",
+            },
+        },
+    },
+    {
         "key": "tesoreria_automatizacion_saldos",
         "name": "Tesorería - Automatización de Saldos",
         "unit": "tesoreria",

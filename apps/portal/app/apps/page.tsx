@@ -16,18 +16,19 @@ type AppRow = {
 
 const UNIT_LABELS: Record<string, string> = {
   gi: "GI",
+  era_importaciones: "ERA Importaciones",
   era_ventas: "ERA Ventas",
   era_compras: "ERA Compras",
   era_proyectos: "ERA Proyectos",
   tesoreria: "Tesorería",
 };
 
-function resolveInteractiveHref(app: AppRow): string {
+function resolveAppHref(app: AppRow): string {
   const raw = app.ui?.url?.trim();
   if (raw) {
     return raw;
   }
-  return `/apps/${app.key}/interactive`;
+  return app.mode === "batch" ? `/apps/${app.key}/new-job` : `/apps/${app.key}/interactive`;
 }
 
 export default function AppsPage() {
@@ -75,8 +76,8 @@ export default function AppsPage() {
               </thead>
               <tbody>
                 {items.map((a) => {
-                  const interactiveHref = resolveInteractiveHref(a);
-                  const isExternal = interactiveHref.startsWith("http://") || interactiveHref.startsWith("https://");
+                  const appHref = resolveAppHref(a);
+                  const isExternal = appHref.startsWith("http://") || appHref.startsWith("https://");
 
                   return (
                     <tr key={a.key}>
@@ -93,17 +94,29 @@ export default function AppsPage() {
                       </td>
                       <td style={{ textAlign: "right" }}>
                         {a.mode === "batch" && a.enabled ? (
-                          <Link
-                            href={`/apps/${a.key}/new-job`}
-                            className="btn btn-primary btn-sm"
-                            style={{ textDecoration: "none" }}
-                          >
-                            Nuevo trabajo
-                          </Link>
+                          isExternal ? (
+                            <a
+                              href={appHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-primary btn-sm"
+                              style={{ textDecoration: "none" }}
+                            >
+                              Nuevo trabajo
+                            </a>
+                          ) : (
+                            <Link
+                              href={appHref}
+                              className="btn btn-primary btn-sm"
+                              style={{ textDecoration: "none" }}
+                            >
+                              Nuevo trabajo
+                            </Link>
+                          )
                         ) : a.mode === "interactive" && a.enabled ? (
                           isExternal ? (
                             <a
-                              href={interactiveHref}
+                              href={appHref}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="btn btn-primary btn-sm"
@@ -113,7 +126,7 @@ export default function AppsPage() {
                             </a>
                           ) : (
                             <Link
-                              href={interactiveHref}
+                              href={appHref}
                               className="btn btn-primary btn-sm"
                               style={{ textDecoration: "none" }}
                             >
