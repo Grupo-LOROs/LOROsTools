@@ -798,6 +798,338 @@ tbody tr:hover {
   background: #f8fafc;
 }
 
+.gi-helper {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.trk-hero {
+  border: none;
+  color: #fff;
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.14), transparent 28%),
+    linear-gradient(135deg, #0f172a 0%, #0f766e 48%, #0891b2 100%);
+}
+
+.trk-kicker {
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+.trk-hero h1 {
+  font-size: 1.7rem;
+  line-height: 1.1;
+}
+
+.trk-hero p {
+  max-width: 60ch;
+  margin-top: 10px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.trk-hero-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.trk-hero-card {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
+}
+
+.trk-hero-card strong,
+.trk-hero-card span {
+  display: block;
+}
+
+.trk-hero-card span {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.trk-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.trk-dropzone {
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #ecfeff 0%, #ffffff 100%);
+  border-color: #67e8f9;
+}
+
+.trk-drop-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.trk-file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.trk-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid #a5f3fc;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #155e75;
+  cursor: pointer;
+}
+
+.trk-file-chip span {
+  color: #0f172a;
+}
+
+.trk-ops-file {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.trk-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trk-mini-card,
+.trk-stat-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.trk-mini-card strong,
+.trk-stat-card strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.35rem;
+}
+
+.trk-mini-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.trk-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.trk-layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.trk-sidebar {
+  position: sticky;
+  top: 72px;
+}
+
+.trk-panel-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.trk-list {
+  display: grid;
+  gap: 10px;
+}
+
+.trk-list-item {
+  width: 100%;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.trk-list-item:hover,
+.trk-list-item.active {
+  border-color: #67e8f9;
+  background: #f0fdff;
+}
+
+.trk-list-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 10px;
+}
+
+.trk-list-sub {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.trk-list-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.trk-subtitle {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.trk-progress-wrap {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.trk-progress-wrap span {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.trk-progress-bar {
+  position: relative;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.trk-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0891b2 0%, #14b8a6 100%);
+}
+
+.trk-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.trk-fact,
+.trk-readout-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.trk-fact strong,
+.trk-readout-item strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.trk-timeline {
+  display: grid;
+  gap: 12px;
+}
+
+.trk-step {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.trk-step-dot {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border: 2px solid #94a3b8;
+  border-radius: 999px;
+  background: #fff;
+}
+
+.trk-step:not(:last-child) .trk-step-dot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  bottom: -24px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #cbd5e1;
+}
+
+.trk-step.done .trk-step-dot,
+.trk-step.current .trk-step-dot {
+  border-color: #0f766e;
+  background: #14b8a6;
+}
+
+.trk-step.current .trk-step-dot {
+  box-shadow: 0 0 0 5px rgba(20, 184, 166, 0.14);
+}
+
+.trk-step-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trk-step-head span,
+.trk-step-status {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.trk-readout {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.trk-notes {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.trk-notes p {
+  margin-top: 6px;
+}
+
 @media (max-width: 900px) {
   .form-grid {
     grid-template-columns: 1fr;
@@ -814,12 +1146,19 @@ tbody tr:hover {
   .gi-status-strip,
   .imp-hero-grid,
   .imp-layout,
-  .imp-summary {
+  .imp-summary,
+  .trk-hero-grid,
+  .trk-upload,
+  .trk-summary,
+  .trk-layout,
+  .trk-facts,
+  .trk-readout {
     grid-template-columns: 1fr;
   }
 
   .gi-sidebar,
-  .imp-sidebar {
+  .imp-sidebar,
+  .trk-sidebar {
     position: static;
   }
 
@@ -830,5 +1169,12 @@ tbody tr:hover {
   .imp-template {
     align-items: start;
     flex-direction: column;
+  }
+
+  .trk-list-top,
+  .trk-step-head,
+  .trk-list-meta,
+  .trk-ops-file {
+    display: grid;
   }
 }

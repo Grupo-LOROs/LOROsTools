@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 from copy import copy
@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 import openpyxl
 import pdfplumber
@@ -26,6 +27,22 @@ BUYER_ADDRESS = (
     "MORELIA, MICHOACÁN, MÉXICO"
 )
 BUYER_RFC = "ERA080725618"
+LETTER_CITY = "Morelia, Michoacán"
+LETTER_COMPANY_LABEL = "RAZÓN SOCIAL ERA"
+LETTER_BRAND = "ERA Energía Renovable de América"
+LETTER_ADDRESSEE = (
+    "ING. MARCO ANTONIO RAMOS TORRES TITULAR DE LA ADUANA DE LÁZARO CÁRDENAS "
+    "DE LA AGENCIA NACIONAL DE ADUANAS DE MÉXICO"
+)
+LETTER_SUBJECT = "ASUNTO: CARTA COMPLEMENTARIA (FACTURA)"
+LETTER_LEGAL_REP = "LIZBETH LÓPEZ RODRÍGUEZ"
+LETTER_SIGN_OFF = "REPRESENTANTE LEGAL"
+LETTER_IMPORTER_LINES = [
+    "ENERGÍA RENOVABLE DE AMÉRICA SA DE CV",
+    "MATÍAS DE BOCANEGRA #34-A COL. EL MIRADOR DEL PUNHUATO C.P. 58249",
+    "MORELIA, MICHOACÁN DE OCAMPO, MÉXICO",
+    "RFC: ERA080725618",
+]
 
 CONTAINER_RX = re.compile(r"\b[A-Z]{4}\d{7}\b")
 MODEL_RX = re.compile(r"\b[A-Z]{2,6}-\d{2,3}[A-Z]?\b")
@@ -40,7 +57,22 @@ PRICE_ITEM_RX = re.compile(
     r"\$(?P<total>[\d,]+\.\d{2})$",
     re.IGNORECASE,
 )
-
+UPLOAD_PREFIX_RX = re.compile(r"^\d{2}-(?P<name>.+)$")
+STOP_BLOCK_MARKERS = (
+    "CONSIGNEE",
+    "IMPORTER",
+    "IMPORTADOR",
+    "TO INVOICE",
+    "PACKING LIST",
+    "PORT ",
+    "VESSEL",
+    "COUNTRY OF ORIGIN",
+    "PAIS DE ORIGEN",
+    "INCOTERM",
+    "FLETE",
+    "TYPE OF CONTAINER",
+    "TIPE OF CONTAINER",
+)
 MONTHS = {
     "JAN": 1,
     "FEB": 2,
@@ -55,8 +87,20 @@ MONTHS = {
     "NOV": 11,
     "DEC": 12,
 }
-
-UPLOAD_PREFIX_RX = re.compile(r"^\d{2}-(?P<name>.+)$")
+MONTHS_ES = {
+    1: "enero",
+    2: "febrero",
+    3: "marzo",
+    4: "abril",
+    5: "mayo",
+    6: "junio",
+    7: "julio",
+    8: "agosto",
+    9: "septiembre",
+    10: "octubre",
+    11: "noviembre",
+    12: "diciembre",
+}
 
 
 @dataclass
@@ -80,11 +124,15 @@ class OrderRecord:
     invoice_number: str | None = None
     order_date: datetime | None = None
     supplier_name: str | None = None
+    supplier_address_lines: list[str] = field(default_factory=list)
     provider_alias: str | None = None
     container: str | None = None
     incoterm: str | None = None
     origin_port: str | None = None
     destination_port: str | None = None
+    tax_id: str | None = None
+    country_origin: str | None = None
+    freight_usd: float | None = None
     etd: datetime | None = None
     eta: datetime | None = None
     terminal: str | None = None
@@ -134,14 +182,24 @@ class OrderRecord:
         return round(sum(totals), 2) if totals else None
 
 
+
 def _safe_name(raw: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", raw.strip())
     return cleaned[:120] or "output"
 
 
+
 def _display_source_name(filename: str) -> str:
     match = UPLOAD_PREFIX_RX.match(filename)
     return match.group("name") if match else filename
+
+
+
+def _display_provider_name(record: OrderRecord, params: dict | None = None) -> str:
+    params = params or {}
+    manual = (params.get("provider_alias") or "").strip()
+    return manual or record.provider_label()
+
 
 
 def _parse_float(raw: str | None) -> float | None:
@@ -151,6 +209,7 @@ def _parse_float(raw: str | None) -> float | None:
         return float(raw.replace(",", "").strip())
     except Exception:
         return None
+
 
 
 def _parse_date_any(raw: str | None) -> datetime | None:
@@ -186,8 +245,10 @@ def _parse_date_any(raw: str | None) -> datetime | None:
     return None
 
 
+
 def _non_empty_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line and line.strip()]
+
 
 
 def _extract_pdf_text(path: Path) -> tuple[str, list[str]]:
@@ -198,6 +259,7 @@ def _extract_pdf_text(path: Path) -> tuple[str, list[str]]:
     text = "\n".join(pages).replace("\u00a0", " ")
     lines = _non_empty_lines(text)
     return text, lines
+
 
 
 def _extract_supplier_name(lines: Iterable[str], labels: tuple[str, ...]) -> str | None:
@@ -214,6 +276,36 @@ def _extract_supplier_name(lines: Iterable[str], labels: tuple[str, ...]) -> str
     return None
 
 
+
+def _extract_labeled_block(lines: Iterable[str], labels: tuple[str, ...], max_lines: int = 5) -> list[str]:
+    line_list = list(lines)
+    for idx, line in enumerate(line_list):
+        upper = line.upper()
+        if not any(label in upper for label in labels):
+            continue
+
+        block: list[str] = []
+        tail = re.sub(r"^EXPORTER\s*(\([^)]*\))?\s*", "", line, flags=re.IGNORECASE)
+        tail = re.sub(r"^PROVEEDOR\s*:?\s*", "", tail, flags=re.IGNORECASE)
+        tail = tail.strip(" :.-")
+        if tail:
+            block.append(tail)
+
+        for next_line in line_list[idx + 1 : idx + 1 + max_lines]:
+            candidate = next_line.strip()
+            upper_candidate = candidate.upper()
+            if not candidate:
+                break
+            if any(upper_candidate.startswith(marker) for marker in STOP_BLOCK_MARKERS):
+                break
+            block.append(candidate)
+
+        return block
+
+    return []
+
+
+
 def _extract_invoice_from_lines(lines: list[str]) -> tuple[str | None, datetime | None]:
     for index, line in enumerate(lines):
         if "TO INVOICE NO. DATE" not in line.upper():
@@ -228,7 +320,17 @@ def _extract_invoice_from_lines(lines: list[str]) -> tuple[str | None, datetime 
         if match:
             return match.group(1).strip(), _parse_date_any(match.group(2))
 
+    for line in lines:
+        match = re.search(
+            r"FACTURA\s+NO\.?\s*([A-Z0-9-]+)\s+DE\s+FECHA\s+(\d{1,2}[/-]\d{1,2}[/-]20\d{2})",
+            line,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip(), _parse_date_any(match.group(2))
+
     return None, None
+
 
 
 def _parse_packing_items(lines: Iterable[str]) -> list[OrderItem]:
@@ -254,6 +356,7 @@ def _parse_packing_items(lines: Iterable[str]) -> list[OrderItem]:
     return items
 
 
+
 def _parse_price_items(lines: Iterable[str]) -> list[OrderItem]:
     items: list[OrderItem] = []
     for line in lines:
@@ -271,6 +374,7 @@ def _parse_price_items(lines: Iterable[str]) -> list[OrderItem]:
             )
         )
     return items
+
 
 
 def _parse_order_pdf(path: Path) -> OrderRecord:
@@ -301,15 +405,37 @@ def _parse_order_pdf(path: Path) -> OrderRecord:
     if provider_match:
         record.provider_alias = provider_match.group(1).strip()
 
-    record.supplier_name = _extract_supplier_name(lines, ("EXPORTER",))
+    supplier_block = _extract_labeled_block(lines, ("EXPORTER", "PROVEEDOR"))
+    if supplier_block:
+        record.supplier_name = supplier_block[0]
+        record.supplier_address_lines = supplier_block[1:]
+    else:
+        record.supplier_name = _extract_supplier_name(lines, ("EXPORTER",))
+
     if not record.supplier_name:
-        supplier_match = re.search(r"TOTAL,\s*USD\s*\$?[\d,]+\.\d{2}\s+([A-Z][A-Z0-9 .,&/-]{3,})\s+PAIS DE ORIGEN", text, re.IGNORECASE | re.DOTALL)
+        supplier_match = re.search(
+            r"TOTAL,\s*USD\s*\$?[\d,]+\.\d{2}\s+([A-Z][A-Z0-9 .,&/-]{3,})\s+PAIS DE ORIGEN",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
         if supplier_match:
             record.supplier_name = " ".join(supplier_match.group(1).split())
+
+    tax_id_match = re.search(r"TAX\s*ID[:\s]*([A-Z0-9-]+)", text, re.IGNORECASE)
+    if tax_id_match:
+        record.tax_id = tax_id_match.group(1).strip()
 
     incoterm_match = re.search(r"INCOTERM:\s*([A-Z0-9]+)", text, re.IGNORECASE)
     if incoterm_match:
         record.incoterm = incoterm_match.group(1).strip().upper()
+
+    country_origin_match = re.search(r"PA[IÍ]S\s+DE\s+ORIGEN:\s*([A-ZÁÉÍÓÚ .,-]+)", text, re.IGNORECASE)
+    if country_origin_match:
+        record.country_origin = " ".join(country_origin_match.group(1).split())
+
+    freight_match = re.search(r"FLETE\s+MAR[ÍI]TIMO:\s*\$?([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+    if freight_match:
+        record.freight_usd = _parse_float(freight_match.group(1))
 
     etd_match = re.search(r"ETD:\s*([0-9./-]{8,10})", text, re.IGNORECASE)
     if etd_match:
@@ -362,10 +488,14 @@ def _parse_order_pdf(path: Path) -> OrderRecord:
     elif record.destination_port and "MANZANILLO" in record.destination_port.upper():
         record.terminal = "MANZANILLO"
 
+    if not record.country_origin and record.origin_port and "," in record.origin_port:
+        record.country_origin = record.origin_port.split(",")[-1].strip()
+
     if "PACKING LIST" in upper and record.container is None:
         record.warnings.append("No se detectó contenedor en el packing list")
 
     return record
+
 
 
 def _copy_row_style(ws, src_row: int, dst_row: int) -> None:
@@ -383,6 +513,7 @@ def _copy_row_style(ws, src_row: int, dst_row: int) -> None:
     ws.row_dimensions[dst_row].height = ws.row_dimensions[src_row].height
 
 
+
 def _next_available_row(ws) -> int:
     last_row = 2
     for row in range(ws.max_row, 2, -1):
@@ -392,9 +523,11 @@ def _next_available_row(ws) -> int:
     return last_row + 1
 
 
+
 def _formula_from_eta(row: int, offset: int) -> str:
     sign = "+" if offset >= 0 else "-"
     return f"=+M{row}{sign}{abs(offset)}"
+
 
 
 def _append_record_to_workbook(ws, record: OrderRecord, row: int, params: dict) -> None:
@@ -405,7 +538,7 @@ def _append_record_to_workbook(ws, record: OrderRecord, row: int, params: dict) 
     transportista = params.get("transportista") or record.transportista
     despacho = params.get("despacho") or record.despacho or "ALMACÉN"
     terminal = params.get("terminal") or record.terminal
-    provider = params.get("provider_alias") or record.provider_label()
+    provider = _display_provider_name(record, params)
 
     ws.cell(row, 1).value = "DOCUMENTACIÓN ENVIADA" if record.eta or record.etd else None
     ws.cell(row, 2).value = record.preferred_number()
@@ -428,6 +561,7 @@ def _append_record_to_workbook(ws, record: OrderRecord, row: int, params: dict) 
     ws.cell(row, 19).value = record.goods_summary() or None
     ws.cell(row, 20).value = transportista
     ws.cell(row, 21).value = despacho
+
 
 
 def _build_pdf_styles():
@@ -456,22 +590,149 @@ def _build_pdf_styles():
     )
     styles.add(
         ParagraphStyle(
-            name="TitleOc",
-            parent=styles["Heading1"],
+            name="LetterBody",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=12,
+            textColor=colors.black,
+            alignment=4,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="LetterHeading",
+            parent=styles["BodyText"],
             fontName="Helvetica-Bold",
-            fontSize=16,
-            leading=18,
-            textColor=colors.HexColor("#0f172a"),
+            fontSize=10,
+            leading=13,
+            textColor=colors.black,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="LetterSmall",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=8,
+            leading=10,
+            textColor=colors.black,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="LetterSmallBold",
+            parent=styles["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            textColor=colors.black,
         )
     )
     return styles
+
 
 
 def _paragraph(text: str, style_name: str, styles) -> Paragraph:
     return Paragraph(text.replace("\n", "<br/>"), styles[style_name])
 
 
-def _render_order_pdf(record: OrderRecord, out_path: Path) -> None:
+
+def _format_letter_date(value: datetime | None = None) -> str:
+    date_value = value or datetime.now(ZoneInfo("America/Mexico_City"))
+    month_name = MONTHS_ES[date_value.month]
+    return f"{LETTER_CITY} a {date_value.day} de {month_name} de {date_value.year}"
+
+
+
+def _format_invoice_date(value: datetime | None) -> str:
+    return value.strftime("%d/%m/%Y") if value else "SIN FECHA"
+
+
+
+def _format_money_usd(value: float | None, digits: int = 2) -> str:
+    if value is None:
+        return ""
+    return f"${value:,.{digits}f}"
+
+
+
+def _table_paragraph(text: str, styles, bold: bool = False) -> Paragraph:
+    style_name = "LetterSmallBold" if bold else "LetterSmall"
+    return _paragraph(text or "", style_name, styles)
+
+
+
+def _item_description(item: OrderItem) -> str:
+    parts = [item.description]
+    if item.model and item.model not in item.description:
+        parts.append(f"MODELO: {item.model}")
+    if item.serial:
+        parts.append(f"No. de serie: {item.serial}")
+    return "<br/>".join(parts)
+
+
+
+def _build_letter_items_table(record: OrderRecord, styles) -> Table:
+    rows = [
+        [
+            _table_paragraph("CONTENEDOR", styles, bold=True),
+            _table_paragraph("DESCRIPCIÓN DE LA MERCANCÍA", styles, bold=True),
+            _table_paragraph("MARCA", styles, bold=True),
+            _table_paragraph("CANTIDAD/UMC", styles, bold=True),
+            _table_paragraph("VALOR UNITARIO USD", styles, bold=True),
+            _table_paragraph("VALOR TOTAL USD", styles, bold=True),
+        ]
+    ]
+
+    if record.items:
+        for index, item in enumerate(record.items):
+            rows.append(
+                [
+                    _table_paragraph(record.container if index == 0 else "", styles),
+                    _table_paragraph(_item_description(item), styles),
+                    _table_paragraph(LETTER_BRAND, styles),
+                    _table_paragraph(f"{item.quantity} PZS" if item.quantity is not None else "", styles),
+                    _table_paragraph(_format_money_usd(item.unit_price_usd, digits=4), styles),
+                    _table_paragraph(_format_money_usd(item.total_price_usd), styles),
+                ]
+            )
+    else:
+        rows.append(
+            [
+                _table_paragraph(record.container or "", styles),
+                _table_paragraph("No se detectaron partidas en el PDF.", styles),
+                _table_paragraph(LETTER_BRAND, styles),
+                _table_paragraph("", styles),
+                _table_paragraph("", styles),
+                _table_paragraph("", styles),
+            ]
+        )
+
+    table = Table(
+        rows,
+        colWidths=[25 * mm, 68 * mm, 28 * mm, 22 * mm, 24 * mm, 24 * mm],
+        repeatRows=1,
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.black),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#475569")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f8fafc")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    return table
+
+
+
+def _render_order_pdf(record: OrderRecord, out_path: Path, params: dict | None = None) -> None:
     styles = _build_pdf_styles()
     doc = SimpleDocTemplate(
         str(out_path),
@@ -483,119 +744,88 @@ def _render_order_pdf(record: OrderRecord, out_path: Path) -> None:
     )
 
     story: list = []
-    story.append(_paragraph("ORDEN DE COMPRA", "TitleOc", styles))
+    invoice_number = record.invoice_number or record.preferred_number()
+    provider_name = _display_provider_name(record, params)
+
+    story.append(_paragraph(LETTER_COMPANY_LABEL, "LetterHeading", styles))
+    story.append(_paragraph(f"PROVEEDOR {provider_name}", "LetterHeading", styles))
+    story.append(_paragraph(_format_letter_date(), "LetterHeading", styles))
+    story.append(Spacer(1, 4 * mm))
+
+    story.append(_paragraph(LETTER_ADDRESSEE, "LetterHeading", styles))
+    story.append(_paragraph("P R E S E N T E", "LetterHeading", styles))
+    story.append(Spacer(1, 3 * mm))
+    story.append(_paragraph(LETTER_SUBJECT, "LetterHeading", styles))
     story.append(Spacer(1, 3 * mm))
 
-    header_table = Table(
-        [
-            ["Pedido", record.preferred_number(), "Fecha", record.order_date.strftime("%d/%m/%Y") if record.order_date else ""],
-            ["Pedido general", record.general_po or "", "Proveedor", record.provider_label()],
-            ["Proveedor real", record.supplier_name or "", "Contenedor", record.container or ""],
-            ["Incoterm", record.incoterm or "", "Archivo fuente", record.source_file],
-        ],
-        colWidths=[30 * mm, 62 * mm, 28 * mm, 56 * mm],
+    letter_body = (
+        f"{LETTER_LEGAL_REP}, EN REPRESENTACIÓN DE {BUYER_NAME} Y DE CONFORMIDAD CON LO "
+        "DISPUESTO EN EL ARTÍCULO 36 Y 36-A FRACCIÓN I INCISO A) Y ARTÍCULO 65 DE LA LEY "
+        "ADUANERA Y REGLA 3.1.8 DE LAS REGLAS GENERALES DE COMERCIO EXTERIOR VIGENTES, "
+        "BAJO PROTESTA DE DECIR VERDAD NOS PERMITIMOS EFECTUAR LA ACLARACIÓN DE:"
     )
-    header_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
-                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#cbd5e1")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.append(header_table)
-    story.append(Spacer(1, 4 * mm))
-
-    story.append(_paragraph("Comprador", "SectionTitle", styles))
-    story.append(_paragraph(f"{BUYER_NAME}<br/>{BUYER_ADDRESS}<br/>RFC: {BUYER_RFC}", "Meta", styles))
-    story.append(Spacer(1, 3 * mm))
-
-    shipment_rows = [
-        ["Puerto de origen", record.origin_port or "", "Puerto de descarga", record.destination_port or ""],
-        ["ETD", record.etd.strftime("%d/%m/%Y") if record.etd else "", "ETA", record.eta.strftime("%d/%m/%Y") if record.eta else ""],
-    ]
-    shipment_table = Table(shipment_rows, colWidths=[35 * mm, 55 * mm, 38 * mm, 45 * mm])
-    shipment_table.setStyle(
-        TableStyle(
-            [
-                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#cbd5e1")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-                ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.append(_paragraph("Plan de embarque", "SectionTitle", styles))
-    story.append(shipment_table)
-    story.append(Spacer(1, 4 * mm))
-
-    story.append(_paragraph("Partidas", "SectionTitle", styles))
-    item_rows = [["Modelo", "Descripción", "Cantidad", "Precio unitario USD", "Total USD"]]
-    for item in record.items:
-        item_rows.append(
-            [
-                item.model or "",
-                item.description,
-                "" if item.quantity is None else str(item.quantity),
-                "" if item.unit_price_usd is None else f"{item.unit_price_usd:,.2f}",
-                "" if item.total_price_usd is None else f"{item.total_price_usd:,.2f}",
-            ]
-        )
-    if len(item_rows) == 1:
-        item_rows.append(["", "No se detectaron partidas en el PDF.", "", "", ""])
-
-    items_table = Table(item_rows, colWidths=[24 * mm, 88 * mm, 20 * mm, 28 * mm, 24 * mm], repeatRows=1)
-    items_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1d4ed8")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#cbd5e1")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
-    story.append(items_table)
-    story.append(Spacer(1, 4 * mm))
-
-    total_usd = record.total_usd()
+    story.append(_paragraph(letter_body, "LetterBody", styles))
+    story.append(Spacer(1, 2 * mm))
     story.append(
         _paragraph(
-            f"Mercancía: {record.goods_summary() or 'Sin resumen disponible'}<br/>"
-            f"Total USD: {f'{total_usd:,.2f}' if total_usd is not None else 'No disponible'}",
-            "Meta",
+            f"LA FACTURA No. {invoice_number} DE FECHA {_format_invoice_date(record.order_date)} "
+            "CONFORME LO SIGUIENTE:",
+            "LetterHeading",
             styles,
         )
     )
+    story.append(Spacer(1, 3 * mm))
+    story.append(_paragraph("IMPORTADOR:", "LetterHeading", styles))
+    story.append(_paragraph("<br/>".join(LETTER_IMPORTER_LINES), "Meta", styles))
+    story.append(Spacer(1, 4 * mm))
+
+    story.append(_build_letter_items_table(record, styles))
+    story.append(Spacer(1, 3 * mm))
+
+    total_usd = record.total_usd()
+    if total_usd is not None:
+        story.append(_paragraph(f"TOTAL, USD {_format_money_usd(total_usd)}", "LetterHeading", styles))
+        story.append(Spacer(1, 4 * mm))
+
+    supplier_lines = [record.supplier_name or ""]
+    supplier_lines.extend(record.supplier_address_lines)
+    supplier_lines = [line for line in supplier_lines if line]
+    if supplier_lines:
+        story.append(_paragraph("PROVEEDOR:", "LetterHeading", styles))
+        story.append(_paragraph("<br/>".join(supplier_lines), "Meta", styles))
+        story.append(Spacer(1, 2 * mm))
+
+    if record.tax_id:
+        story.append(_paragraph(f"TAX ID: {record.tax_id}", "Meta", styles))
+    if record.country_origin:
+        story.append(_paragraph(f"PAÍS DE ORIGEN: {record.country_origin}", "Meta", styles))
+    if record.incoterm:
+        story.append(_paragraph(f"INCOTERM: {record.incoterm}", "Meta", styles))
+    if record.freight_usd is not None:
+        story.append(_paragraph(f"FLETE MARÍTIMO: {_format_money_usd(record.freight_usd)} USD", "Meta", styles))
+
+    story.append(Spacer(1, 4 * mm))
     if record.warnings:
-        story.append(Spacer(1, 3 * mm))
         story.append(_paragraph("Observaciones", "SectionTitle", styles))
         story.append(_paragraph("<br/>".join(record.warnings), "Meta", styles))
+        story.append(Spacer(1, 3 * mm))
+
+    story.append(
+        _paragraph(
+            "SIN MÁS POR EL MOMENTO, AGRADEZCO SU AMABLE ATENCIÓN Y, ASÍ MISMO, "
+            "ME PONGO A SU DISPOSICIÓN PARA CUALQUIER ACLARACIÓN.",
+            "LetterBody",
+            styles,
+        )
+    )
+    story.append(Spacer(1, 8 * mm))
+    story.append(_paragraph("ATENTAMENTE", "LetterHeading", styles))
+    story.append(Spacer(1, 10 * mm))
+    story.append(_paragraph(LETTER_LEGAL_REP, "LetterHeading", styles))
+    story.append(_paragraph(LETTER_SIGN_OFF, "Meta", styles))
 
     doc.build(story)
+
 
 
 def process(ctx: JobContext) -> str:
@@ -631,14 +861,14 @@ def process(ctx: JobContext) -> str:
     workbook_out = ctx.output_path(workbook_name)
     workbook.save(str(workbook_out))
 
-    ctx.report_progress(72, "Generando órdenes de compra...")
+    ctx.report_progress(72, "Generando cartas complementarias...")
 
     for index, record in enumerate(records, start=1):
         percent = 72 + int(23 * index / len(records))
-        ctx.report_progress(percent, f"Generando orden de compra para {record.preferred_number()}...")
-        pdf_name = f"OC_{_safe_name(record.preferred_number())}.pdf"
+        ctx.report_progress(percent, f"Generando carta para {record.preferred_number()}...")
+        pdf_name = f"CARTA_{_safe_name(record.preferred_number())}.pdf"
         pdf_out = ctx.output_path(pdf_name)
-        _render_order_pdf(record, pdf_out)
+        _render_order_pdf(record, pdf_out, ctx.params or {})
 
-    ctx.report_progress(98, f"Generados {len(records)} PDF(s) y un Excel actualizado.")
+    ctx.report_progress(98, f"Generados {len(records)} PDF(s) tipo carta y un Excel actualizado.")
     return ctx.output_rel(workbook_out.name)

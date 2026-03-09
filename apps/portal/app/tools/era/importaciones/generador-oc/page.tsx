@@ -185,16 +185,16 @@ export default function EraImportacionesGeneradorPage() {
         <p className="imp-kicker">ERA Importaciones</p>
         <div className="imp-hero-grid">
           <div>
-            <h1>{app?.name || "Generador de órdenes de compra"}</h1>
+            <h1>{app?.name || "Cartas complementarias desde órdenes de compra"}</h1>
             <p className="imp-hero-copy">
-              Sube uno o varios PDFs del proveedor, actualiza la programación de entregas
-              y genera una orden de compra PDF por cada documento procesado.
+              Sube una o varias órdenes de compra en PDF, actualiza la programación de entregas
+              y genera una carta complementaria PDF por cada documento procesado.
             </p>
           </div>
           <div className="imp-steps">
             <div className="imp-step">
               <strong>1. Carga</strong>
-              <span>Packing lists o PDFs del proveedor</span>
+              <span>Órdenes de compra en PDF</span>
             </div>
             <div className="imp-step">
               <strong>2. Completa</strong>
@@ -202,7 +202,7 @@ export default function EraImportacionesGeneradorPage() {
             </div>
             <div className="imp-step">
               <strong>3. Genera</strong>
-              <span>Excel actualizado + orden de compra en PDF</span>
+              <span>Excel actualizado + carta complementaria en PDF</span>
             </div>
           </div>
         </div>
@@ -216,7 +216,7 @@ export default function EraImportacionesGeneradorPage() {
             <div className="flex-between mb-4">
               <div>
                 <h2 className="imp-panel-title">Documentos del proveedor</h2>
-                <p className="text-muted">Puedes subir varios PDFs en el mismo trabajo.</p>
+                <p className="text-muted">Puedes subir varias órdenes de compra PDF en el mismo trabajo.</p>
               </div>
               <span className="badge badge-batch">{pdfs.length} PDF</span>
             </div>
@@ -232,7 +232,7 @@ export default function EraImportacionesGeneradorPage() {
               <div>
                 <div className="imp-drop-title">Arrastra tus PDFs aquí</div>
                 <p className="text-muted">
-                  También puedes hacer clic para seleccionar los documentos del proveedor.
+                  También puedes hacer clic para seleccionar las órdenes de compra.
                 </p>
               </div>
             </div>
@@ -352,11 +352,11 @@ export default function EraImportacionesGeneradorPage() {
 
             <div className="form-grid">
               <div className="form-group">
-                <label>Alias del proveedor</label>
+                <label>Nombre del proveedor o vendedor</label>
                 <input
                   value={params.provider_alias}
                   onChange={(event) => updateParam("provider_alias", event.target.value)}
-                  placeholder="Ej. HELIOS o PHILLIP"
+                  placeholder="Ej. PHILLIP"
                 />
               </div>
               <div className="form-group">
@@ -421,7 +421,7 @@ export default function EraImportacionesGeneradorPage() {
               <div className="imp-check">
                 <strong>Salida esperada</strong>
                 <span>
-                  1 Excel actualizado y {outputPdfCount || 0} orden(es) de compra en PDF
+                  1 Excel actualizado y {outputPdfCount || 0} carta(s) complementaria(s) en PDF
                 </span>
               </div>
               <div className="imp-check">

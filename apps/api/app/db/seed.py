@@ -64,7 +64,7 @@ APPS = [
     },
     {
         "key": "era_importaciones_generador_oc",
-        "name": "ERA Importaciones - Generador de órdenes de compra",
+        "name": "ERA Importaciones - Cartas complementarias desde órdenes de compra",
         "unit": "era_importaciones",
         "mode": "batch",
         "ui_type": "next",
@@ -77,8 +77,23 @@ APPS = [
             "outputs": [{"type": "xlsx"}, {"type": "pdf"}],
             "notes": {
                 "template": "Sube el archivo de programación de entregas en Excel.",
-                "behavior": "Actualiza la hoja de programación y genera una orden de compra PDF por documento.",
+                "behavior": "Actualiza la hoja de programación y genera una carta complementaria PDF por documento.",
             },
+        },
+    },
+    {
+        "key": "era_compras_seguimiento_importaciones",
+        "name": "ERA Compras - Seguimiento de importaciones",
+        "unit": "era_compras",
+        "mode": "interactive",
+        "ui_type": "next",
+        "ui_url": "/tools/era/compras/seguimiento-importaciones",
+        "spec": {
+            "inputs": [
+                {"type": "pdf", "multiple": True},
+                {"type": "xlsx", "multiple": False, "optional": True, "role": "operativo"},
+            ],
+            "outputs": [{"type": "data"}],
         },
     },
     {

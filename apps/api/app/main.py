@@ -10,6 +10,7 @@ from app.db.seed import seed
 from app.db.session import Base, SessionLocal, engine
 from app.routes.apps import router as apps_router
 from app.routes.auth import router as auth_router
+from app.routes.compras_tracking import router as compras_tracking_router
 from app.routes.jobs import router as jobs_router
 from app.routes.gi_tools import router as gi_tools_router
 from app.routes import job_files
@@ -65,5 +66,6 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(users_router, prefix="/users", tags=["users"])
 app.include_router(apps_router, prefix="/apps", tags=["apps"])
 app.include_router(gi_tools_router)
+app.include_router(compras_tracking_router)
 app.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
 app.include_router(job_files.router)
