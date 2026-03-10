@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import AppDefinition, Job, JobFile, User
+from app.db.models import AppDefinition, Job, User
 from app.db.session import get_db
 from app.deps import ensure_app_access, require_user
 
@@ -675,6 +675,47 @@ def _latest_tracking_date(shipment: ShipmentTracking) -> str:
     return shipment.source_updated_at or "0000-00-00"
 
 
+def _shipment_from_importaciones_record(record: dict[str, Any], source_updated_at: str | None) -> ShipmentTracking:
+    warnings = record.get("warnings") if isinstance(record.get("warnings"), list) else []
+    shipment = ShipmentTracking(
+        id=str(
+            record.get("order_number")
+            or record.get("general_po")
+            or record.get("invoice_number")
+            or record.get("source_file")
+            or "importaciones-history"
+        ),
+        source="importaciones-history",
+        order_number=str(record.get("order_number")).strip() if record.get("order_number") else None,
+        general_po=str(record.get("general_po")).strip() if record.get("general_po") else None,
+        invoice_number=str(record.get("invoice_number")).strip() if record.get("invoice_number") else None,
+        supplier_display=str(record.get("supplier_display")).strip() if record.get("supplier_display") else None,
+        supplier_name=str(record.get("supplier_name")).strip() if record.get("supplier_name") else None,
+        container=str(record.get("container")).strip() if record.get("container") else None,
+        origin_port=str(record.get("origin_port")).strip() if record.get("origin_port") else None,
+        destination_port=str(record.get("destination_port")).strip() if record.get("destination_port") else None,
+        terminal=str(record.get("terminal")).strip() if record.get("terminal") else None,
+        incoterm=str(record.get("incoterm")).strip() if record.get("incoterm") else None,
+        total_usd=_to_float(record.get("total_usd")),
+        order_date=_to_iso_date(record.get("order_date")),
+        etd=_to_iso_date(record.get("etd")),
+        eta=_to_iso_date(record.get("eta")),
+        comments=" | ".join(str(item).strip() for item in warnings if str(item).strip()) or None,
+        source_updated_at=source_updated_at,
+    )
+    if not shipment.order_number and shipment.invoice_number:
+        shipment.order_number = shipment.invoice_number
+    shipment.id = shipment.order_number or shipment.general_po or shipment.id
+
+    normalized_destination = _normalize_header(shipment.destination_port)
+    if not shipment.terminal and "lazaro" in normalized_destination:
+        shipment.terminal = "APM"
+    elif not shipment.terminal and "manzanillo" in normalized_destination:
+        shipment.terminal = "MANZANILLO"
+
+    return shipment
+
+
 def _merge_tracking_data(pdf_shipments: list[ShipmentTracking], operations_rows: list[dict[str, Any]]) -> tuple[list[ShipmentTracking], int]:
     shipments = list(pdf_shipments)
     index: dict[str, ShipmentTracking] = {}
@@ -724,36 +765,50 @@ def _load_importaciones_history(db: Session, user: User) -> list[ShipmentTrackin
     files_root = Path(settings.files_root).resolve()
 
     query = (
-        db.query(JobFile, Job)
-        .join(Job, Job.id == JobFile.job_id)
+        db.query(Job)
         .filter(
             Job.app_key == IMPORTACIONES_SOURCE_APP_KEY,
             Job.status == "succeeded",
-            JobFile.role == "input",
         )
-        .order_by(Job.created_at.desc(), JobFile.created_at.desc())
+        .order_by(Job.created_at.desc())
     )
     if not user.is_admin:
         query = query.filter(Job.created_by == user.username)
 
     latest_by_identifier: dict[str, ShipmentTracking] = {}
 
-    for job_file, job in query.all():
-        if not job_file.filename.lower().endswith(".pdf"):
+    for job in query.all():
+        source_updated_at = job.created_at.isoformat() if job.created_at else None
+        stored_records = (job.params or {}).get("tracking_records")
+        if isinstance(stored_records, list) and stored_records:
+            for record in stored_records:
+                if not isinstance(record, dict):
+                    continue
+                shipment = _shipment_from_importaciones_record(record, source_updated_at)
+                identifiers = _shipment_identifiers(shipment) or [shipment.id]
+                if any(identifier in latest_by_identifier for identifier in identifiers):
+                    continue
+                for identifier in identifiers:
+                    latest_by_identifier[identifier] = shipment
             continue
-        abs_path = (files_root / job_file.path).resolve()
-        if not abs_path.exists():
-            continue
-        shipment = _parse_order_pdf(abs_path)
-        shipment.source = "importaciones-history"
-        shipment.source_updated_at = job.created_at.isoformat() if job.created_at else None
-        identifiers = _shipment_identifiers(shipment)
-        if not identifiers:
-            identifiers = [shipment.id]
-        if any(identifier in latest_by_identifier for identifier in identifiers):
-            continue
-        for identifier in identifiers:
-            latest_by_identifier[identifier] = shipment
+
+        job_files = sorted(
+            [item for item in job.files if item.role == "input" and item.filename.lower().endswith(".pdf")],
+            key=lambda item: item.created_at,
+            reverse=True,
+        )
+        for job_file in job_files:
+            abs_path = (files_root / job_file.path).resolve()
+            if not abs_path.exists():
+                continue
+            shipment = _parse_order_pdf(abs_path)
+            shipment.source = "importaciones-history"
+            shipment.source_updated_at = source_updated_at
+            identifiers = _shipment_identifiers(shipment) or [shipment.id]
+            if any(identifier in latest_by_identifier for identifier in identifiers):
+                continue
+            for identifier in identifiers:
+                latest_by_identifier[identifier] = shipment
 
     unique_shipments: dict[str, ShipmentTracking] = {}
     for shipment in latest_by_identifier.values():

@@ -529,6 +529,10 @@ def _formula_from_eta(row: int, offset: int) -> str:
     return f"=+M{row}{sign}{abs(offset)}"
 
 
+def _iso_date(value: datetime | None) -> str | None:
+    return value.date().isoformat() if value else None
+
+
 
 def _append_record_to_workbook(ws, record: OrderRecord, row: int, params: dict) -> None:
     source_row = max(3, row - 1)
@@ -561,6 +565,31 @@ def _append_record_to_workbook(ws, record: OrderRecord, row: int, params: dict) 
     ws.cell(row, 19).value = record.goods_summary() or None
     ws.cell(row, 20).value = transportista
     ws.cell(row, 21).value = despacho
+
+
+def _serialize_tracking_record(record: OrderRecord, params: dict | None = None) -> dict:
+    params = params or {}
+    supplier_display = _display_provider_name(record, params) or None
+    terminal = params.get("terminal") or record.terminal
+
+    return {
+        "order_number": record.order_number or record.invoice_number or record.preferred_number(),
+        "general_po": record.general_po,
+        "invoice_number": record.invoice_number,
+        "supplier_display": supplier_display,
+        "supplier_name": record.supplier_name,
+        "container": record.container,
+        "origin_port": record.origin_port,
+        "destination_port": record.destination_port,
+        "terminal": terminal,
+        "incoterm": record.incoterm,
+        "total_usd": record.total_usd(),
+        "order_date": _iso_date(record.order_date),
+        "etd": _iso_date(record.etd),
+        "eta": _iso_date(record.eta),
+        "source_file": record.source_file,
+        "warnings": list(record.warnings),
+    }
 
 
 
@@ -869,6 +898,10 @@ def process(ctx: JobContext) -> str:
         pdf_name = f"CARTA_{_safe_name(record.preferred_number())}.pdf"
         pdf_out = ctx.output_path(pdf_name)
         _render_order_pdf(record, pdf_out, ctx.params or {})
+
+    params = dict(ctx.params or {})
+    params["tracking_records"] = [_serialize_tracking_record(record, params) for record in records]
+    ctx.params = params
 
     ctx.report_progress(98, f"Generados {len(records)} PDF(s) tipo carta y un Excel actualizado.")
     return ctx.output_rel(workbook_out.name)

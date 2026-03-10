@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { apiFetch, apiUpload } from "@/lib/api";
@@ -122,7 +123,7 @@ export default function NewJobPage() {
   return (
     <>
       <p className="text-muted mb-4">
-        <a href="/apps">&larr; Apps</a>
+        <Link href="/apps">&larr; Apps</Link>
       </p>
 
       <h1 style={{ fontSize: "1.3rem", marginBottom: 4 }}>{app?.name || key}</h1>
@@ -143,7 +144,7 @@ export default function NewJobPage() {
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
         >
-          Arrastra archivos aquí o haz clic para seleccionar
+          Arrastra archivos aquÃ­ o haz clic para seleccionar
         </div>
         <input
           ref={inputRef}
@@ -218,3 +219,5 @@ export default function NewJobPage() {
     </>
   );
 }
+
+

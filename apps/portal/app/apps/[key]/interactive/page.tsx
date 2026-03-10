@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -10,6 +10,16 @@ type AppDef = {
   mode: string;
   ui: { type: string | null; url: string | null };
 };
+
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
+function normalizeInternalHref(raw: string): string {
+  if (!raw.startsWith("/")) return raw;
+  if (!BASE_PATH) return raw;
+  if (raw === BASE_PATH) return "/";
+  if (raw.startsWith(`${BASE_PATH}/`)) return raw.slice(BASE_PATH.length) || "/";
+  return raw;
+}
 
 export default function InteractiveLauncherPage() {
   const { key } = useParams<{ key: string }>();
@@ -26,7 +36,7 @@ export default function InteractiveLauncherPage() {
 
   const targetUrl = useMemo(() => {
     const raw = app?.ui?.url?.trim();
-    return raw || null;
+    return raw ? normalizeInternalHref(raw) : null;
   }, [app]);
 
   useEffect(() => {

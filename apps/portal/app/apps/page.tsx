@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
@@ -23,10 +23,20 @@ const UNIT_LABELS: Record<string, string> = {
   tesoreria: "Tesorería",
 };
 
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
+function normalizeInternalHref(raw: string): string {
+  if (!raw.startsWith("/")) return raw;
+  if (!BASE_PATH) return raw;
+  if (raw === BASE_PATH) return "/";
+  if (raw.startsWith(`${BASE_PATH}/`)) return raw.slice(BASE_PATH.length) || "/";
+  return raw;
+}
+
 function resolveAppHref(app: AppRow): string {
   const raw = app.ui?.url?.trim();
   if (raw) {
-    return raw;
+    return normalizeInternalHref(raw);
   }
   return app.mode === "batch" ? `/apps/${app.key}/new-job` : `/apps/${app.key}/interactive`;
 }
@@ -41,7 +51,6 @@ export default function AppsPage() {
       .catch((e) => setError(e.message));
   }, []);
 
-  // Group by unit
   const grouped = apps.reduce<Record<string, AppRow[]>>((acc, a) => {
     (acc[a.unit] ??= []).push(a);
     return acc;

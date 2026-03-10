@@ -1,3 +1,29 @@
+grupo-loros.com {
+  redir /tools /tools/ 308
+
+  handle_path /api/* {
+    reverse_proxy api:8000
+  }
+
+  handle /tools* {
+    reverse_proxy portal:3000
+  }
+
+  redir https://www.grupo-loros.com{uri} 308
+}
+
 api.grupo-loros.com {
-  reverse_proxy api:8000
+  redir /tools /tools/ 308
+
+  handle_path /api/* {
+    reverse_proxy api:8000
+  }
+
+  handle /tools* {
+    reverse_proxy portal:3000
+  }
+
+  handle {
+    reverse_proxy api:8000
+  }
 }

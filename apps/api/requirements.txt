@@ -10,3 +10,4 @@ pydantic==2.10.6
 pydantic-settings==2.7.1
 PyMuPDF==1.25.2
 openpyxl==3.1.5
+reportlab>=4.1.0

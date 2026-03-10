@@ -114,3 +114,10 @@ class JobFile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     job: Mapped[Job] = relationship(back_populates="files")
+
+
+class CatalogQuoteFolioCounter(Base):
+    __tablename__ = "catalog_quote_folio_counters"
+
+    serie: Mapped[str] = mapped_column(String(10), primary_key=True)
+    last_folio: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

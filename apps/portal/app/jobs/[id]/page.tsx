@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { apiDownload, apiFetch } from "@/lib/api";
@@ -90,10 +91,10 @@ export default function JobDetailPage() {
   async function deleteJob() {
     if (!job) return;
     if (job.status === "running") {
-      setError("No se puede borrar un trabajo en ejecución.");
+      setError("No se puede borrar un trabajo en ejecuciÃ³n.");
       return;
     }
-    if (!confirm(`¿Eliminar trabajo ${job.id}? Esta acción no se puede deshacer.`)) {
+    if (!confirm(`Â¿Eliminar trabajo ${job.id}? Esta acciÃ³n no se puede deshacer.`)) {
       return;
     }
 
@@ -112,7 +113,7 @@ export default function JobDetailPage() {
   return (
     <>
       <p className="text-muted mb-4">
-        <a href="/jobs">&larr; Mis trabajos</a>
+        <Link href="/jobs">&larr; Mis trabajos</Link>
       </p>
 
       {error && <div className="error-msg">{error}</div>}
@@ -251,13 +252,13 @@ export default function JobDetailPage() {
 
           {job.status === "failed" && (
             <div className="error-msg">
-              El trabajo falló. {job.message || "Revisa los logs para más detalle."}
+              El trabajo fallÃ³. {job.message || "Revisa los logs para mÃ¡s detalle."}
             </div>
           )}
 
           {!isTerminal && (
             <p className="text-muted mt-4" style={{ textAlign: "center" }}>
-              Actualizando automáticamente cada 3 segundos...
+              Actualizando automÃ¡ticamente cada 3 segundos...
             </p>
           )}
         </>
@@ -265,3 +266,5 @@ export default function JobDetailPage() {
     </>
   );
 }
+
+

@@ -10,6 +10,7 @@ from processors.era_importaciones_oc import (
     _display_source_name,
     _extract_invoice_from_lines,
     _parse_packing_items,
+    _serialize_tracking_record,
 )
 
 
@@ -114,6 +115,31 @@ class EraImportacionesProcessorTests(unittest.TestCase):
         self.assertEqual(ws.cell(4, 19).value, "TUG-08 (232) BG-10C (170)")
         self.assertEqual(ws.cell(4, 20).value, "TRAXION")
         self.assertEqual(ws.cell(4, 21).value, "ALMACÉN")
+
+    def test_serialize_tracking_record_uses_manual_provider_and_iso_dates(self):
+        record = OrderRecord(
+            source_file="26L05_PL.pdf",
+            order_number="26L05",
+            invoice_number="26L05",
+            supplier_name="HELIOS POWER LTD",
+            container="TEMU8352600",
+            terminal="APM",
+            origin_port="QINGDAO, CHINA",
+            destination_port="LAZARO CARDENAS, MEXICO",
+            order_date=datetime(2025, 12, 31),
+            etd=datetime(2026, 1, 5),
+            eta=datetime(2026, 1, 20),
+            items=[OrderItem(model="TUG-08", description="Solar vacuum tube", quantity=12, total_price_usd=1200.0)],
+        )
+
+        payload = _serialize_tracking_record(record, {"provider_alias": "PHILLIP"})
+
+        self.assertEqual(payload["order_number"], "26L05")
+        self.assertEqual(payload["supplier_display"], "PHILLIP")
+        self.assertEqual(payload["order_date"], "2025-12-31")
+        self.assertEqual(payload["etd"], "2026-01-05")
+        self.assertEqual(payload["eta"], "2026-01-20")
+        self.assertEqual(payload["total_usd"], 1200.0)
 
 
 if __name__ == "__main__":

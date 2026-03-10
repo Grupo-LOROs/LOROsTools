@@ -9,6 +9,7 @@ import mimetypes
 import os
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -100,7 +101,9 @@ def _process_job(job: Job, db: Session) -> str:
         )
 
     ctx = _build_context(job, db)
-    return processor_fn(ctx)
+    out_rel = processor_fn(ctx)
+    job.params = deepcopy(ctx.params or {})
+    return out_rel
 
 
 def _rel_path(files_root: Path, abs_path: Path) -> str:
