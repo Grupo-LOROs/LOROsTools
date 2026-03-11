@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/tools",
+      "destination": "https://tools-origin.grupo-loros.com/tools"
+    },
+    {
+      "source": "/tools/:path*",
+      "destination": "https://tools-origin.grupo-loros.com/tools/:path*"
+    }
+  ]
+}
