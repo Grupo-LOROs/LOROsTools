@@ -1,10 +1,17 @@
-// All API calls go through Next.js rewrites (/api/* → api.grupo-loros.com/*)
-const API = "/api";
+﻿const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
 function authHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
   const token = sessionStorage.getItem("loros_token");
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function apiBase() {
+  return API_ORIGIN || "/api";
+}
+
+export function apiUrl(path: string) {
+  return `${apiBase()}${path}`;
 }
 
 export async function apiFetch<T = any>(
@@ -13,7 +20,7 @@ export async function apiFetch<T = any>(
 ): Promise<T> {
   const headers = { ...authHeaders(), ...(init?.headers as Record<string, string>) };
 
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     headers,
     credentials: "include",
@@ -29,12 +36,11 @@ export async function apiFetch<T = any>(
   return body as T;
 }
 
-/** POST multipart/form-data (for job creation) */
 export async function apiUpload<T = any>(
   path: string,
   formData: FormData
 ): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(apiUrl(path), {
     method: "POST",
     headers: authHeaders(),
     credentials: "include",
@@ -51,9 +57,8 @@ export async function apiUpload<T = any>(
   return body as T;
 }
 
-/** Download a blob (for job output) */
 export async function apiDownload(path: string, filename: string) {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(apiUrl(path), {
     headers: authHeaders(),
     credentials: "include",
   });

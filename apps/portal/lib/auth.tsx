@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { apiUrl } from "./api";
 
 type User = { username: string; is_admin: boolean; app_permissions?: string[] } | null;
 
@@ -60,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       headers.Authorization = `Bearer ${authToken}`;
     }
 
-    const res = await fetch("/api/auth/me", {
+    const res = await fetch(apiUrl("/auth/me"), {
       method: "GET",
       headers,
       credentials: "include",
@@ -79,7 +80,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [persistAuth]);
 
-  // Restore from sessionStorage on mount and revalidate with backend
   useEffect(() => {
     const t = sessionStorage.getItem(TOKEN_KEY);
     const u = sessionStorage.getItem(USER_KEY);
@@ -93,12 +93,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     refreshUser().catch(() => {
-      // If not authenticated, keep current local state (usually null)
     }).finally(() => setReady(true));
   }, [persistAuth, refreshUser]);
 
   const login = useCallback(async (username: string, password: string) => {
-    const res = await fetch("/api/auth/login", {
+    const res = await fetch(apiUrl("/auth/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -113,14 +112,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       app_permissions: body.user.app_permissions || [],
     });
 
-    // Load full profile (including app permissions)
     await refreshUser().catch(() => {});
   }, [persistAuth, refreshUser]);
 
   const logout = useCallback(() => {
     persistAuth(null, null);
-    // Also clear server cookie
-    fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+    fetch(apiUrl("/auth/logout"), { method: "POST", credentials: "include" }).catch(() => {});
   }, [persistAuth]);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
@@ -132,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       headers.Authorization = `Bearer ${authToken}`;
     }
 
-    const res = await fetch("/api/auth/change-password", {
+    const res = await fetch(apiUrl("/auth/change-password"), {
       method: "POST",
       headers,
       credentials: "include",
