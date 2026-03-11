@@ -1,4 +1,4 @@
-import os
+﻿import os
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -98,35 +98,39 @@ APPS = [
     },
     {
         "key": "tesoreria_automatizacion_saldos",
-        "name": "Tesorería - Automatización de Saldos",
+        "name": "Tesorería - Captura de movimientos bancarios",
         "unit": "tesoreria",
-        "mode": "batch",
+        "mode": "interactive",
+        "ui_type": "next",
+        "ui_url": "/tools/tesoreria/movimientos-bancarios",
         "spec": {
             "inputs": [
                 {
                     "type": "pdf",
                     "multiple": True,
                     "banks": ["Santander", "Monex", "Bajio", "BBVA", "Banregio"],
-                },
-                {"type": "xlsx", "multiple": False, "role": "plantilla"},
+                }
             ],
-            "outputs": [{"type": "xlsx"}],
+            "outputs": [{"type": "data"}],
             "notes": {
-                "account_number": "Se toma del archivo (nombre puede venir en mayusculas).",
-                "movement_rule": "Agregar movimientos nuevos que no esten en la plantilla; persistir en BD.",
+                "behavior": "Normaliza movimientos, detecta banco y permite copiar la tabla para pegarla rápido en Excel.",
+                "ocr": "Usa OCR cuando el PDF venga escaneado o sin capa de texto.",
             },
         },
     },
     {
         "key": "tesoreria_generacion_conciliacion",
-        "name": "Tesorería - Generación de Conciliación",
+        "name": "Tesorería - Formato asistido",
         "unit": "tesoreria",
         "mode": "interactive",
         "ui_type": "next",
-        "ui_url": "/tools/tesoreria/conciliacion",
+        "ui_url": "/tools/tesoreria/formato-asistido",
         "spec": {
             "inputs": [{"type": "xlsx", "multiple": False, "optional": True}],
-            "outputs": [{"type": "xlsx"}],
+            "outputs": [{"type": "data"}],
+            "notes": {
+                "status": "Pendiente de reglas por fila definidas por Tesorería.",
+            },
         },
     },
     {
