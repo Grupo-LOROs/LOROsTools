@@ -132,6 +132,19 @@ def _validate_era_proyectos_cfe(inputs: list[UploadFile], template: UploadFile |
         )
 
 
+def _validate_cxp_autorizacion_pagos(inputs: list[UploadFile], template: UploadFile | None) -> None:
+    if not inputs:
+        raise HTTPException(status_code=400, detail="inputs are required (1 Excel de provisión)")
+
+    if len(inputs) != 1:
+        raise HTTPException(status_code=400, detail="Solo se admite un archivo Excel de provisión por job")
+
+    _ensure_all_ext(inputs, {".xlsx", ".xlsm", ".xls"}, "El input debe ser un archivo Excel")
+
+    if template is not None:
+        raise HTTPException(status_code=400, detail="Esta app no utiliza template adicional")
+
+
 @router.get("")
 def list_apps(
     unit: str | None = None,
@@ -218,6 +231,9 @@ async def create_job(
 
     if app.key == "era_proyectos_comisionador_cfe":
         _validate_era_proyectos_cfe(inputs, template)
+
+    if app.key == "cuentas_por_pagar_autorizacion_pagos":
+        _validate_cxp_autorizacion_pagos(inputs, template)
 
     # params
     params: dict[str, Any] = {}

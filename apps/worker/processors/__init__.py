@@ -18,6 +18,7 @@ from . import era_compras_generador_oc
 from . import era_importaciones_oc
 from . import tesoreria_saldos
 from . import era_proyectos_comisionador_cfe
+from . import cxp_autorizacion_pagos
 
 # app_key → process(ctx) function
 REGISTRY: dict[str, callable] = {
@@ -26,4 +27,5 @@ REGISTRY: dict[str, callable] = {
     "era_importaciones_generador_oc": era_importaciones_oc.process,
     "tesoreria_automatizacion_saldos": tesoreria_saldos.process,
     "era_proyectos_comisionador_cfe": era_proyectos_comisionador_cfe.process,
+    "cuentas_por_pagar_autorizacion_pagos": cxp_autorizacion_pagos.process,
 }

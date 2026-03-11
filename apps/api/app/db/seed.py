@@ -134,6 +134,20 @@ APPS = [
         },
     },
     {
+        "key": "cuentas_por_pagar_autorizacion_pagos",
+        "name": "Cuentas por pagar - Autorización de pagos",
+        "unit": "cuentas_por_pagar",
+        "mode": "batch",
+        "spec": {
+            "inputs": [{"type": "xlsx", "multiple": False}],
+            "outputs": [{"type": "pdf"}],
+            "notes": {
+                "behavior": "Genera el PDF de autorización de pagos a partir del archivo semanal de provisión.",
+                "selection": "Toma las partidas del día de pago objetivo usando la fecha real de pago y las hojas resumen del libro.",
+            },
+        },
+    },
+    {
         "key": "era_proyectos_comisionador_cfe",
         "name": "ERA Proyectos - Comisionador CFE",
         "unit": "era_proyectos",
