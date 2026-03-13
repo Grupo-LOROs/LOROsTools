@@ -57,6 +57,37 @@ export async function apiUpload<T = any>(
   return body as T;
 }
 
+export async function apiUploadDownload(
+  path: string,
+  formData: FormData,
+  fallbackFilename: string
+) {
+  const res = await fetch(apiUrl(path), {
+    method: "POST",
+    headers: authHeaders(),
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const ct = res.headers.get("content-type") || "";
+    const body = ct.includes("application/json") ? await res.json() : await res.text();
+    const msg = typeof body === "string" ? body : body?.detail || "Download failed";
+    throw new Error(msg);
+  }
+
+  const blob = await res.blob();
+  const contentDisposition = res.headers.get("content-disposition") || "";
+  const match = contentDisposition.match(/filename="?([^"]+)"?/i);
+  const filename = match?.[1] || fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function apiDownload(path: string, filename: string) {
   const res = await fetch(apiUrl(path), {
     headers: authHeaders(),

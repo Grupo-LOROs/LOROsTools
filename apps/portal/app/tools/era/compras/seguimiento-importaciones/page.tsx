@@ -144,6 +144,13 @@ export default function ComprasTrackingPage() {
         <Link href="/apps">&larr; Aplicaciones</Link>
       </p>
 
+      <div className="dir-view-switch mb-4">
+        <span className="btn btn-primary">Vista operativa</span>
+        <Link href="/tools/era/compras/seguimiento-importaciones/direccion" className="btn btn-outline">
+          Vista dirección
+        </Link>
+      </div>
+
       <section className="card trk-hero mb-4">
         <div className="trk-kicker">ERA Compras</div>
         <h1>Seguimiento de importaciones</h1>
