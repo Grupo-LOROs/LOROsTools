@@ -6,37 +6,13 @@ import { apiUpload, apiUploadDownload } from "@/lib/api";
 
 type AttentionLevel = "ok" | "watch" | "risk";
 type MilestoneStatus = "completed" | "current" | "upcoming" | "scheduled";
+type PeriodScope = "year" | "month" | "week" | "rolling30" | "all";
 
 type BreakdownItem = {
   key?: string;
   label: string;
   count: number;
   color?: string;
-};
-
-type LocationPoint = {
-  label: string;
-  lat: number;
-  lng: number;
-};
-
-type RouteSummary = {
-  key: string;
-  origin_label: string;
-  destination_label: string;
-  count: number;
-  active: number;
-  delivered: number;
-  color: string;
-  origin: LocationPoint;
-  destination: LocationPoint;
-};
-
-type AlertItem = {
-  shipment_id: string;
-  level: AttentionLevel;
-  title: string;
-  detail: string;
 };
 
 type Milestone = {
@@ -80,6 +56,8 @@ type Shipment = {
   incoterm: string | null;
   total_usd: number | null;
   source_updated_at: string | null;
+  reference_date: string | null;
+  reference_label: string | null;
   stage_key: string;
   stage_label: string;
   stage_color: string;
@@ -103,22 +81,37 @@ type AnalysisResponse = {
     shipments: number;
     delivered: number;
     active: number;
-    with_route_data: number;
     pending_provider_payment: number;
     pending_forwarder_payment: number;
     upcoming_arrivals: number;
     at_risk: number;
+    with_eta: number;
+    with_dispatch: number;
+    with_reference_date: number;
     total_usd: number | null;
     total_usd_count: number;
-    coverage_pct: number;
   };
   stage_breakdown: BreakdownItem[];
   supplier_breakdown: BreakdownItem[];
   terminal_breakdown: BreakdownItem[];
-  routes: RouteSummary[];
-  alerts: AlertItem[];
+  movement_summary: Array<{ key: string; label: string; count: number }>;
   shipments: Shipment[];
 };
+
+const MONTHS = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+];
 
 function formatDate(value: string | null) {
   if (!value) return "Sin fecha";
@@ -132,6 +125,12 @@ function formatDate(value: string | null) {
 function formatMoney(value: number | null) {
   if (value == null) return "Sin monto";
   return new Intl.NumberFormat("es-MX", { style: "currency", currency: "USD" }).format(value);
+}
+
+function toDate(value: string | null) {
+  if (!value) return null;
+  const resolved = new Date(`${value}T12:00:00`);
+  return Number.isNaN(resolved.getTime()) ? null : resolved;
 }
 
 function shipmentTitle(shipment: Shipment) {
@@ -148,75 +147,157 @@ function attentionLabel(level: AttentionLevel) {
   return "En curso";
 }
 
-function pointToMap(point: LocationPoint, width: number, height: number) {
+function isoWeekInfo(value: Date) {
+  const date = new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return { year: date.getUTCFullYear(), week };
+}
+
+function startOfIsoWeek(year: number, week: number) {
+  const january4 = new Date(Date.UTC(year, 0, 4));
+  const day = january4.getUTCDay() || 7;
+  const monday = new Date(january4);
+  monday.setUTCDate(january4.getUTCDate() - day + 1 + (week - 1) * 7);
+  return monday;
+}
+
+function periodBounds(scope: PeriodScope, year: number | null, month: number | null, week: number | null) {
+  const today = new Date();
+  if (scope === "all") return { start: null as Date | null, end: null as Date | null };
+  if (scope === "rolling30") {
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 30);
+    return { start, end };
+  }
+  if (scope === "year" && year) return { start: new Date(year, 0, 1), end: new Date(year, 11, 31) };
+  if (scope === "month" && year && month) return { start: new Date(year, month - 1, 1), end: new Date(year, month, 0) };
+  if (scope === "week" && year && week) {
+    const start = startOfIsoWeek(year, week);
+    const end = new Date(start);
+    end.setUTCDate(start.getUTCDate() + 6);
+    return {
+      start: new Date(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()),
+      end: new Date(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()),
+    };
+  }
+  return { start: null, end: null };
+}
+
+function periodLabel(scope: PeriodScope, year: number | null, month: number | null, week: number | null) {
+  if (scope === "rolling30") return "Próximos 30 días";
+  if (scope === "year" && year) return `Año ${year}`;
+  if (scope === "month" && year && month) return `${MONTHS[month - 1]} ${year}`;
+  if (scope === "week" && year && week) {
+    const { start, end } = periodBounds(scope, year, month, week);
+    return `Semana ${week} · ${formatDate(start ? start.toISOString().slice(0, 10) : null)} al ${formatDate(end ? end.toISOString().slice(0, 10) : null)}`;
+  }
+  return "Todo el histórico";
+}
+
+function filterByPeriod(shipments: Shipment[], scope: PeriodScope, year: number | null, month: number | null, week: number | null) {
+  const { start, end } = periodBounds(scope, year, month, week);
+  if (!start || !end) return shipments;
+  return shipments.filter((shipment) => {
+    const referenceDate = toDate(shipment.reference_date);
+    return !!referenceDate && referenceDate >= start && referenceDate <= end;
+  });
+}
+
+function topBreakdown(shipments: Shipment[], getLabel: (shipment: Shipment) => string, limit: number) {
+  const counts = new Map<string, number>();
+  shipments.forEach((shipment) => {
+    const label = getLabel(shipment);
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "es"))
+    .slice(0, limit)
+    .map(([label, count]) => ({ label, count }));
+}
+
+function stageBreakdown(shipments: Shipment[], base: BreakdownItem[]) {
+  const counts = new Map<string, number>();
+  shipments.forEach((shipment) => counts.set(shipment.stage_key, (counts.get(shipment.stage_key) || 0) + 1));
+  return base.map((stage) => ({ ...stage, count: counts.get(stage.key || "") || 0 }));
+}
+
+function filteredOverview(shipments: Shipment[]) {
+  const totalUsdValues = shipments.filter((shipment) => shipment.total_usd != null).map((shipment) => shipment.total_usd as number);
   return {
-    x: ((point.lng + 180) / 360) * width,
-    y: height - ((point.lat + 90) / 180) * height,
+    shipments: shipments.length,
+    delivered: shipments.filter((shipment) => shipment.stage_key === "delivered").length,
+    active: shipments.filter((shipment) => shipment.stage_key !== "delivered").length,
+    at_risk: shipments.filter((shipment) => shipment.attention_level === "risk").length,
+    pending_provider_payment: shipments.filter((shipment) => (shipment.provider_payment_status || "").toLowerCase().includes("pendiente")).length,
+    pending_forwarder_payment: shipments.filter((shipment) => (shipment.forwarder_payment_status || "").toLowerCase().includes("pendiente")).length,
+    upcoming_arrivals: shipments.filter((shipment) => typeof shipment.days_to_eta === "number" && shipment.days_to_eta >= 0 && shipment.days_to_eta <= 14).length,
+    with_eta: shipments.filter((shipment) => !!shipment.eta).length,
+    with_dispatch: shipments.filter((shipment) => !!shipment.dispatch_date).length,
+    total_usd: totalUsdValues.length ? totalUsdValues.reduce((sum, value) => sum + value, 0) : null,
   };
 }
 
-function buildFormData(trackingFile: File | null, useLatestTemplate: boolean, useHistory: boolean) {
+function movementSummary(shipments: Shipment[], scope: PeriodScope, year: number | null, month: number | null, week: number | null) {
+  const { start, end } = periodBounds(scope, year, month, week);
+  const within = (value: string | null) => {
+    if (!start || !end) return !!value;
+    const resolved = toDate(value);
+    return !!resolved && resolved >= start && resolved <= end;
+  };
+  return [
+    { key: "etd", label: "Salidas (ETD)", count: shipments.filter((shipment) => within(shipment.etd)).length },
+    { key: "eta", label: "Arribos (ETA)", count: shipments.filter((shipment) => within(shipment.eta)).length },
+    { key: "dispatch", label: "Despachos", count: shipments.filter((shipment) => within(shipment.dispatch_date)).length },
+    { key: "delivered", label: "Entregas", count: shipments.filter((shipment) => within(shipment.warehouse_request_date)).length },
+  ];
+}
+
+function buildFormData(
+  trackingFile: File | null,
+  useLatestTemplate: boolean,
+  useHistory: boolean,
+  scope: PeriodScope,
+  year: number | null,
+  month: number | null,
+  week: number | null
+) {
   const formData = new FormData();
-  if (trackingFile) {
-    formData.append("tracking_file", trackingFile);
-  }
+  if (trackingFile) formData.append("tracking_file", trackingFile);
   formData.append("use_latest_template", String(useLatestTemplate));
   formData.append("use_importaciones_history", String(useHistory));
+  formData.append("period_scope", scope);
+  if (year) formData.append("period_year", String(year));
+  if (month) formData.append("period_month", String(month));
+  if (week) formData.append("period_week", String(week));
   return formData;
 }
 
-function RouteMap({ routes }: { routes: RouteSummary[] }) {
-  const width = 920;
-  const height = 280;
-  if (!routes.length) {
-    return <div className="dir-empty">No hay puertos identificables para dibujar el mapa en esta corrida.</div>;
-  }
-
+function StageTrackerOverview({ items, total }: { items: BreakdownItem[]; total: number }) {
   return (
-    <div className="dir-map-shell">
-      <svg viewBox={`0 0 ${width} ${height}`} className="dir-map-svg" aria-label="Mapa de rutas">
-        <rect x="0" y="0" width={width} height={height} rx="26" className="dir-map-bg" />
-        {Array.from({ length: 4 }).map((_, index) => (
-          <line key={`h-${index}`} x1="0" y1={((index + 1) * height) / 5} x2={width} y2={((index + 1) * height) / 5} className="dir-map-grid" />
-        ))}
-        {Array.from({ length: 5 }).map((_, index) => (
-          <line key={`v-${index}`} x1={((index + 1) * width) / 6} y1="0" x2={((index + 1) * width) / 6} y2={height} className="dir-map-grid" />
-        ))}
-        {routes.slice(0, 8).map((route) => {
-          const start = pointToMap(route.origin, width, height);
-          const end = pointToMap(route.destination, width, height);
-          const mx = (start.x + end.x) / 2;
-          const my = Math.max(32, Math.min(height - 26, (start.y + end.y) / 2 + 40));
-          return (
-            <g key={route.key}>
-              <path d={`M ${start.x} ${start.y} C ${mx} ${my}, ${mx} ${my}, ${end.x} ${end.y}`} stroke={route.color} strokeWidth={Math.min(5, Math.max(2, route.count))} fill="none" strokeLinecap="round" />
-              <circle cx={start.x} cy={start.y} r="4" className="dir-map-dot" />
-              <circle cx={end.x} cy={end.y} r="4" className="dir-map-dot" />
-              <text x={start.x + 8} y={start.y - 8} className="dir-map-label">{route.origin.label}</text>
-              <text x={end.x + 8} y={end.y + 16} className="dir-map-label">{route.destination.label}</text>
-            </g>
-          );
-        })}
-      </svg>
-      <div className="dir-route-chips">
-        {routes.slice(0, 6).map((route) => (
-          <div key={route.key} className="dir-route-chip">
-            <span>{route.origin_label}</span>
-            <strong>{route.count}</strong>
-            <span>{route.destination_label}</span>
-          </div>
-        ))}
-      </div>
+    <div className="dir-stage-flow">
+      {items.map((item, index) => (
+        <div key={item.key || item.label} className={`dir-stage-node ${item.count ? "active" : ""}`} style={{ ["--stage-color" as string]: item.color || "#94a3b8" }}>
+          {index < items.length - 1 ? <span className="dir-stage-link" /> : null}
+          <div className="dir-stage-marker"><span>{item.count}</span></div>
+          <strong>{item.label}</strong>
+          <small>{total ? `${Math.round((item.count / total) * 100)}% del período` : "Sin registros"}</small>
+        </div>
+      ))}
     </div>
   );
 }
 
-function MilestonesStrip({ milestones, color }: { milestones: Milestone[]; color: string }) {
+function PackageTracker({ milestones, color }: { milestones: Milestone[]; color: string }) {
   return (
-    <div className="dir-milestones">
-      {milestones.map((milestone) => (
-        <div key={milestone.key} className={`dir-mile dir-mile-${milestone.status}`}>
-          <span className="dir-mile-dot" style={{ ["--mile-color" as string]: color }} />
+    <div className="dir-package-track">
+      {milestones.map((milestone, index) => (
+        <div key={milestone.key} className={`dir-package-stop dir-package-${milestone.status}`} style={{ ["--mile-color" as string]: color }}>
+          {index < milestones.length - 1 ? <span className="dir-package-link" /> : null}
+          <span className="dir-package-dot" />
           <strong>{milestone.label}</strong>
           <small>{formatDate(milestone.date)}</small>
         </div>
@@ -226,8 +307,8 @@ function MilestonesStrip({ milestones, color }: { milestones: Milestone[]; color
 }
 
 export default function SeguimientoImportacionesDireccionPage() {
-  const autoLoadRef = useRef(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const autoLoadRef = useRef(false);
 
   const [trackingFile, setTrackingFile] = useState<File | null>(null);
   const [useLatestTemplate, setUseLatestTemplate] = useState(true);
@@ -236,7 +317,11 @@ export default function SeguimientoImportacionesDireccionPage() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
-  const [stageFilter, setStageFilter] = useState<string>("all");
+  const [stageFilter, setStageFilter] = useState("all");
+  const [periodScope, setPeriodScope] = useState<PeriodScope>("year");
+  const [periodYear, setPeriodYear] = useState<number | null>(new Date().getFullYear());
+  const [periodMonth, setPeriodMonth] = useState<number | null>(new Date().getMonth() + 1);
+  const [periodWeek, setPeriodWeek] = useState<number | null>(isoWeekInfo(new Date()).week);
 
   async function runAnalysis(nextFile = trackingFile, nextUseLatest = useLatestTemplate, nextUseHistory = useHistory) {
     if (!nextFile && !nextUseLatest) {
@@ -249,10 +334,21 @@ export default function SeguimientoImportacionesDireccionPage() {
     try {
       const data = await apiUpload<AnalysisResponse>(
         "/tools/compras/importaciones-tracking/executive/analyze",
-        buildFormData(nextFile, nextUseLatest, nextUseHistory)
+        buildFormData(nextFile, nextUseLatest, nextUseHistory, "all", null, null, null)
       );
       setAnalysis(data);
       setStageFilter("all");
+
+      const dated = data.shipments
+        .map((item) => toDate(item.reference_date))
+        .filter((value): value is Date => value instanceof Date)
+        .sort((a, b) => b.getTime() - a.getTime());
+      const anchor = dated[0] || new Date();
+      const weekInfo = isoWeekInfo(anchor);
+      setPeriodScope("year");
+      setPeriodYear(anchor.getFullYear());
+      setPeriodMonth(anchor.getMonth() + 1);
+      setPeriodWeek(weekInfo.week);
     } catch (err: any) {
       setError(err?.message || "No se pudo generar la vista ejecutiva.");
     } finally {
@@ -266,11 +362,47 @@ export default function SeguimientoImportacionesDireccionPage() {
     void runAnalysis(null, true, true);
   }, []);
 
-  const filteredShipments = useMemo(() => {
+  const availableYears = useMemo(() => {
     if (!analysis) return [];
-    if (stageFilter === "all") return analysis.shipments;
-    return analysis.shipments.filter((item) => item.stage_key === stageFilter);
-  }, [analysis, stageFilter]);
+    const years = new Set<number>();
+    analysis.shipments.forEach((item) => {
+      const resolved = toDate(item.reference_date);
+      if (resolved) years.add(resolved.getFullYear());
+    });
+    return Array.from(years).sort((a, b) => b - a);
+  }, [analysis]);
+
+  const periodShipments = useMemo(() => {
+    if (!analysis) return [];
+    return filterByPeriod(analysis.shipments, periodScope, periodYear, periodMonth, periodWeek);
+  }, [analysis, periodScope, periodYear, periodMonth, periodWeek]);
+
+  const stageItems = useMemo(() => analysis ? stageBreakdown(periodShipments, analysis.stage_breakdown) : [], [analysis, periodShipments]);
+  const stageScopedShipments = useMemo(() => {
+    if (stageFilter === "all") return periodShipments;
+    return periodShipments.filter((item) => item.stage_key === stageFilter);
+  }, [periodShipments, stageFilter]);
+  const overview = useMemo(() => filteredOverview(periodShipments), [periodShipments]);
+  const suppliers = useMemo(() => topBreakdown(periodShipments, (item) => item.supplier_display || item.supplier_name || "Sin proveedor", 6), [periodShipments]);
+  const terminals = useMemo(() => topBreakdown(periodShipments, (item) => item.terminal || "Sin terminal", 4), [periodShipments]);
+  const alerts = useMemo(() => periodShipments.filter((item) => item.attention_level !== "ok" && item.attention_reason).slice(0, 8), [periodShipments]);
+  const movements = useMemo(() => analysis ? movementSummary(analysis.shipments, periodScope, periodYear, periodMonth, periodWeek) : [], [analysis, periodScope, periodYear, periodMonth, periodWeek]);
+  const currentPeriodLabel = useMemo(() => periodLabel(periodScope, periodYear, periodMonth, periodWeek), [periodScope, periodYear, periodMonth, periodWeek]);
+
+  function applyPreset(scope: PeriodScope) {
+    const anchor = new Date();
+    const weekInfo = isoWeekInfo(anchor);
+    setPeriodScope(scope);
+    if (scope === "year") {
+      setPeriodYear(anchor.getFullYear());
+    } else if (scope === "month") {
+      setPeriodYear(anchor.getFullYear());
+      setPeriodMonth(anchor.getMonth() + 1);
+    } else if (scope === "week") {
+      setPeriodYear(weekInfo.year);
+      setPeriodWeek(weekInfo.week);
+    }
+  }
 
   async function exportPdf() {
     if (!analysis) return;
@@ -279,7 +411,7 @@ export default function SeguimientoImportacionesDireccionPage() {
     try {
       await apiUploadDownload(
         "/tools/compras/importaciones-tracking/executive/export-pdf",
-        buildFormData(trackingFile, useLatestTemplate, useHistory),
+        buildFormData(trackingFile, useLatestTemplate, useHistory, periodScope, periodYear, periodMonth, periodWeek),
         "seguimiento-importaciones-direccion.pdf"
       );
     } catch (err: any) {
@@ -307,8 +439,8 @@ export default function SeguimientoImportacionesDireccionPage() {
               <div className="dir-kicker">ERA Compras · Dirección</div>
               <h1>Seguimiento ejecutivo de importaciones</h1>
               <p>
-                Tablero en una sola pantalla para dirección: estado por embarque, focos de riesgo, pagos, rutas y
-                exportación a PDF con presentación ejecutiva.
+                Tablero premium para dirección con lectura por etapa, filtros de período y exportación ejecutiva para
+                reportes semanales, mensuales o anuales.
               </p>
             </div>
             <div className="dir-hero-actions">
@@ -327,7 +459,11 @@ export default function SeguimientoImportacionesDireccionPage() {
             <div className="dir-control-block">
               <span className="dir-control-label">Fuente del tablero</span>
               <strong>{analysis?.data_source.label || "Último Excel generado por Importaciones"}</strong>
-              <small>{analysis?.data_source.updated_at ? `Actualizado el ${new Date(analysis.data_source.updated_at).toLocaleString("es-MX")}` : "Puedes sustituirlo con otro Excel si necesitas una foto distinta."}</small>
+              <small>
+                {analysis?.data_source.updated_at
+                  ? `Actualizado el ${new Date(analysis.data_source.updated_at).toLocaleString("es-MX")}`
+                  : "Puedes sustituirlo con otro Excel si necesitas una foto distinta."}
+              </small>
             </div>
             <div className="dir-control-block">
               <button className="btn btn-outline" type="button" onClick={() => fileRef.current?.click()}>
@@ -341,70 +477,156 @@ export default function SeguimientoImportacionesDireccionPage() {
                 onChange={(event) => {
                   const file = event.target.files?.[0] || null;
                   setTrackingFile(file);
-                  setUseLatestTemplate(file ? false : useLatestTemplate);
+                  if (file) setUseLatestTemplate(false);
                   event.target.value = "";
                 }}
               />
-              {trackingFile ? <small>{trackingFile.name}</small> : <small>Sin archivo manual cargado.</small>}
+              <small>{trackingFile ? trackingFile.name : "Sin archivo manual cargado."}</small>
             </div>
             <label className="inline-check">
-              <input type="checkbox" checked={useLatestTemplate} onChange={(event) => {
-                const checked = event.target.checked;
-                setUseLatestTemplate(checked);
-                if (checked) setTrackingFile(null);
-              }} />
+              <input
+                type="checkbox"
+                checked={useLatestTemplate}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setUseLatestTemplate(checked);
+                  if (checked) setTrackingFile(null);
+                }}
+              />
               <span>Usar el último Excel generado por Importaciones</span>
             </label>
             <label className="inline-check">
               <input type="checkbox" checked={useHistory} onChange={(event) => setUseHistory(event.target.checked)} />
-              <span>Enriquecer rutas y puertos con el historial disponible</span>
+              <span>Enriquecer datos con el historial disponible</span>
             </label>
           </section>
 
           {analysis ? (
             <>
+              <section className="card dir-period-card mb-4">
+                <div className="dir-card-head">
+                  <div>
+                    <h2>Período del reporte</h2>
+                    <p>{currentPeriodLabel}</p>
+                  </div>
+                  <span>{periodShipments.length} embarques visibles</span>
+                </div>
+
+                <div className="dir-period-presets">
+                  <button type="button" className={`dir-filter-chip ${periodScope === "year" ? "active" : ""}`} onClick={() => applyPreset("year")}>Año actual</button>
+                  <button type="button" className={`dir-filter-chip ${periodScope === "month" ? "active" : ""}`} onClick={() => applyPreset("month")}>Mes actual</button>
+                  <button type="button" className={`dir-filter-chip ${periodScope === "week" ? "active" : ""}`} onClick={() => applyPreset("week")}>Semana actual</button>
+                  <button type="button" className={`dir-filter-chip ${periodScope === "rolling30" ? "active" : ""}`} onClick={() => setPeriodScope("rolling30")}>Próximos 30 días</button>
+                  <button type="button" className={`dir-filter-chip ${periodScope === "all" ? "active" : ""}`} onClick={() => setPeriodScope("all")}>Todo histórico</button>
+                </div>
+
+                <div className="dir-period-grid">
+                  <label className="form-group">
+                    <span className="dir-control-label">Tipo</span>
+                    <select value={periodScope} onChange={(event) => setPeriodScope(event.target.value as PeriodScope)}>
+                      <option value="year">Año</option>
+                      <option value="month">Mes</option>
+                      <option value="week">Semana</option>
+                      <option value="rolling30">Próximos 30 días</option>
+                      <option value="all">Todo histórico</option>
+                    </select>
+                  </label>
+
+                  {(periodScope === "year" || periodScope === "month" || periodScope === "week") ? (
+                    <label className="form-group">
+                      <span className="dir-control-label">Año</span>
+                      <select value={periodYear || ""} onChange={(event) => setPeriodYear(Number(event.target.value))}>
+                        {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  {periodScope === "month" ? (
+                    <label className="form-group">
+                      <span className="dir-control-label">Mes</span>
+                      <select value={periodMonth || ""} onChange={(event) => setPeriodMonth(Number(event.target.value))}>
+                        {MONTHS.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  {periodScope === "week" ? (
+                    <label className="form-group">
+                      <span className="dir-control-label">Semana ISO</span>
+                      <select value={periodWeek || ""} onChange={(event) => setPeriodWeek(Number(event.target.value))}>
+                        {Array.from({ length: 53 }).map((_, index) => <option key={index + 1} value={index + 1}>Semana {index + 1}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+              </section>
+
               <section className="dir-stats-grid mb-4">
-                <div className="card dir-stat"><span>Embarques</span><strong>{analysis.overview.shipments}</strong></div>
-                <div className="card dir-stat"><span>Entregados</span><strong>{analysis.overview.delivered}</strong></div>
-                <div className="card dir-stat"><span>Riesgo</span><strong>{analysis.overview.at_risk}</strong></div>
-                <div className="card dir-stat"><span>Arribos 14 días</span><strong>{analysis.overview.upcoming_arrivals}</strong></div>
-                <div className="card dir-stat"><span>Rutas visibles</span><strong>{analysis.overview.with_route_data}</strong></div>
-                <div className="card dir-stat"><span>USD identificados</span><strong>{formatMoney(analysis.overview.total_usd)}</strong></div>
+                <div className="card dir-stat"><span>Embarques</span><strong>{overview.shipments}</strong></div>
+                <div className="card dir-stat"><span>Entregados</span><strong>{overview.delivered}</strong></div>
+                <div className="card dir-stat"><span>Riesgo</span><strong>{overview.at_risk}</strong></div>
+                <div className="card dir-stat"><span>Arribos 14 días</span><strong>{overview.upcoming_arrivals}</strong></div>
+                <div className="card dir-stat"><span>Con ETA</span><strong>{overview.with_eta}</strong></div>
+                <div className="card dir-stat"><span>USD identificados</span><strong>{formatMoney(overview.total_usd)}</strong></div>
               </section>
 
               <section className="dir-main-grid mb-4">
-                <div className="card dir-map-card">
-                  <div className="dir-card-head"><h2>Mapa ejecutivo</h2><span>{analysis.overview.coverage_pct}% de cobertura visual</span></div>
-                  <RouteMap routes={analysis.routes} />
+                <div className="card dir-stage-card">
+                  <div className="dir-card-head">
+                    <div>
+                      <h2>Estado actual por etapa</h2>
+                      <p>Lectura tipo tracker para dirección sobre el período seleccionado.</p>
+                    </div>
+                    <span>{currentPeriodLabel}</span>
+                  </div>
+                  <StageTrackerOverview items={stageItems} total={Math.max(periodShipments.length, 1)} />
                 </div>
+
                 <div className="dir-side-stack">
                   <div className="card dir-side-card">
-                    <div className="dir-card-head"><h2>Alertas</h2><span>{analysis.alerts.length} visibles</span></div>
-                    <div className="dir-alert-list">
-                      {analysis.alerts.length ? analysis.alerts.map((alert) => (
-                        <div key={`${alert.shipment_id}-${alert.title}`} className={`dir-alert dir-alert-${alert.level}`}>
-                          <strong>{alert.title}</strong>
-                          <span>{alert.detail}</span>
+                    <div className="dir-card-head">
+                      <h2>Movimientos del período</h2>
+                      <span>Resumen</span>
+                    </div>
+                    <div className="dir-movement-grid">
+                      {movements.map((item) => (
+                        <div key={item.key}>
+                          <span>{item.label}</span>
+                          <strong>{item.count}</strong>
                         </div>
-                      )) : <div className="dir-empty">Sin alertas prioritarias en esta corrida.</div>}
+                      ))}
                     </div>
                   </div>
+
                   <div className="card dir-side-card">
-                    <div className="dir-card-head"><h2>Lectura rápida</h2><span>Concentrado</span></div>
-                    <div className="dir-breakdown-grid">
-                      <div><span>Pago proveedor pendiente</span><strong>{analysis.overview.pending_provider_payment}</strong></div>
-                      <div><span>Pago forwarder pendiente</span><strong>{analysis.overview.pending_forwarder_payment}</strong></div>
-                      <div><span>Fuente</span><strong>{analysis.data_source.used_history ? "Excel + historial" : "Solo Excel"}</strong></div>
-                      <div><span>Embarques activos</span><strong>{analysis.overview.active}</strong></div>
+                    <div className="dir-card-head">
+                      <h2>Alertas</h2>
+                      <span>{alerts.length} visibles</span>
+                    </div>
+                    <div className="dir-alert-list">
+                      {alerts.length ? alerts.map((alert) => (
+                        <div key={`${alert.id}-${alert.attention_reason}`} className={`dir-alert dir-alert-${alert.attention_level}`}>
+                          <strong>{alert.attention_reason}</strong>
+                          <span>{shipmentTitle(alert)} · {shipmentSubtitle(alert)}</span>
+                        </div>
+                      )) : <div className="dir-empty">Sin alertas prioritarias en este período.</div>}
                     </div>
                   </div>
                 </div>
               </section>
 
               <section className="dir-filters mb-4">
-                <button type="button" className={`dir-filter-chip ${stageFilter === "all" ? "active" : ""}`} onClick={() => setStageFilter("all")}>Todos ({analysis.shipments.length})</button>
-                {analysis.stage_breakdown.map((item) => (
-                  <button key={item.key} type="button" className={`dir-filter-chip ${stageFilter === item.key ? "active" : ""}`} style={{ ["--chip-color" as string]: item.color || "#cbd5e1" }} onClick={() => setStageFilter(item.key || "all")}>
+                <button type="button" className={`dir-filter-chip ${stageFilter === "all" ? "active" : ""}`} onClick={() => setStageFilter("all")}>
+                  Todos ({periodShipments.length})
+                </button>
+                {stageItems.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={`dir-filter-chip ${stageFilter === item.key ? "active" : ""}`}
+                    style={{ ["--chip-color" as string]: item.color || "#cbd5e1" }}
+                    onClick={() => setStageFilter(item.key || "all")}
+                  >
                     {item.label} ({item.count})
                   </button>
                 ))}
@@ -412,53 +634,97 @@ export default function SeguimientoImportacionesDireccionPage() {
 
               <section className="dir-meta-grid mb-4">
                 <div className="card dir-meta-card">
-                  <div className="dir-card-head"><h2>Proveedores</h2><span>Top visibles</span></div>
-                  <div className="dir-list">{analysis.supplier_breakdown.map((item) => <div key={item.label}><span>{item.label}</span><strong>{item.count}</strong></div>)}</div>
+                  <div className="dir-card-head">
+                    <h2>Proveedores</h2>
+                    <span>Top del período</span>
+                  </div>
+                  <div className="dir-list">
+                    {suppliers.map((item) => (
+                      <div key={item.label}>
+                        <span>{item.label}</span>
+                        <strong>{item.count}</strong>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+
                 <div className="card dir-meta-card">
-                  <div className="dir-card-head"><h2>Terminales</h2><span>Participación</span></div>
-                  <div className="dir-list">{analysis.terminal_breakdown.map((item) => <div key={item.label}><span>{item.label}</span><strong>{item.count}</strong></div>)}</div>
+                  <div className="dir-card-head">
+                    <h2>Terminales</h2>
+                    <span>Participación</span>
+                  </div>
+                  <div className="dir-list">
+                    {terminals.map((item) => (
+                      <div key={item.label}>
+                        <span>{item.label}</span>
+                        <strong>{item.count}</strong>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </section>
 
-              <section className="dir-cards-grid">
-                {filteredShipments.map((shipment) => (
-                  <article key={shipment.id} className="card dir-shipment-card">
-                    <div className="dir-card-head">
-                      <div>
-                        <h2>{shipmentTitle(shipment)}</h2>
-                        <p>{shipmentSubtitle(shipment)}</p>
+              {stageScopedShipments.length ? (
+                <section className="dir-cards-grid">
+                  {stageScopedShipments.map((shipment) => (
+                    <article key={shipment.id} className="card dir-shipment-card">
+                      <div className="dir-card-head">
+                        <div>
+                          <h2>{shipmentTitle(shipment)}</h2>
+                          <p>{shipmentSubtitle(shipment)}</p>
+                        </div>
+                        <span className={`dir-stage-badge dir-stage-${shipment.attention_level}`} style={{ ["--stage-color" as string]: shipment.stage_color }}>
+                          {shipment.stage_label}
+                        </span>
                       </div>
-                      <span className={`dir-stage-badge dir-stage-${shipment.attention_level}`} style={{ ["--stage-color" as string]: shipment.stage_color }}>
-                        {shipment.stage_label}
-                      </span>
-                    </div>
-                    <div className="dir-progress">
-                      <div className="dir-progress-bar"><div className="dir-progress-fill" style={{ width: `${shipment.progress_pct}%`, background: shipment.stage_color }} /></div>
-                      <span>{shipment.progress_pct}% del recorrido operativo</span>
-                    </div>
-                    <MilestonesStrip milestones={shipment.milestones} color={shipment.stage_color} />
-                    <div className="dir-info-grid">
-                      <div><span>Contenedor</span><strong>{shipment.container || "Sin dato"}</strong></div>
-                      <div><span>Terminal</span><strong>{shipment.terminal || "Sin dato"}</strong></div>
-                      <div><span>ETA</span><strong>{formatDate(shipment.eta)}</strong></div>
-                      <div><span>Siguiente</span><strong>{shipment.next_event_label ? `${shipment.next_event_label} · ${formatDate(shipment.next_event_date)}` : "Sin siguiente evento"}</strong></div>
-                      <div><span>Estatus contenedor</span><strong>{shipment.container_status || "Sin estatus"}</strong></div>
-                      <div><span>Riesgo</span><strong>{shipment.attention_reason || attentionLabel(shipment.attention_level)}</strong></div>
-                    </div>
-                    <div className="dir-pill-row">
-                      <span className="dir-pill">{shipment.origin_port || "Origen sin puerto"}</span>
-                      <span className="dir-pill">{shipment.destination_port || "Destino sin puerto"}</span>
-                      <span className="dir-pill">{shipment.incoterm || "Incoterm pendiente"}</span>
-                    </div>
-                    <div className="dir-footer-grid">
-                      <div><span>Pago proveedor</span><strong>{shipment.provider_payment_status || "Sin estatus"}</strong><small>{formatDate(shipment.provider_payment_due)}</small></div>
-                      <div><span>Pago forwarder</span><strong>{shipment.forwarder_payment_status || "Sin estatus"}</strong><small>{formatDate(shipment.forwarder_payment_due)}</small></div>
-                      <div><span>Mercancía</span><strong>{shipment.goods_summary || "Sin descripción"}</strong><small>{formatMoney(shipment.total_usd)}</small></div>
-                    </div>
-                  </article>
-                ))}
-              </section>
+
+                      <div className="dir-progress">
+                        <div className="dir-progress-bar">
+                          <div className="dir-progress-fill" style={{ width: `${shipment.progress_pct}%`, background: shipment.stage_color }} />
+                        </div>
+                        <span>{shipment.progress_pct}% del recorrido operativo</span>
+                      </div>
+
+                      <PackageTracker milestones={shipment.milestones} color={shipment.stage_color} />
+
+                      <div className="dir-info-grid">
+                        <div><span>Referencia del período</span><strong>{shipment.reference_label ? `${shipment.reference_label} · ${formatDate(shipment.reference_date)}` : "Sin referencia"}</strong></div>
+                        <div><span>Contenedor</span><strong>{shipment.container || "Sin dato"}</strong></div>
+                        <div><span>Terminal</span><strong>{shipment.terminal || "Sin dato"}</strong></div>
+                        <div><span>ETA</span><strong>{formatDate(shipment.eta)}</strong></div>
+                        <div><span>Siguiente</span><strong>{shipment.next_event_label ? `${shipment.next_event_label} · ${formatDate(shipment.next_event_date)}` : "Sin siguiente evento"}</strong></div>
+                        <div><span>Alerta</span><strong>{shipment.attention_reason || attentionLabel(shipment.attention_level)}</strong></div>
+                      </div>
+
+                      <div className="dir-pill-row">
+                        <span className="dir-pill">{shipment.origin_port || "Origen pendiente"}</span>
+                        <span className="dir-pill">{shipment.destination_port || "Destino pendiente"}</span>
+                        <span className="dir-pill">{shipment.incoterm || "Incoterm pendiente"}</span>
+                      </div>
+
+                      <div className="dir-footer-grid">
+                        <div>
+                          <span>Pago proveedor</span>
+                          <strong>{shipment.provider_payment_status || "Sin estatus"}</strong>
+                          <small>{formatDate(shipment.provider_payment_due)}</small>
+                        </div>
+                        <div>
+                          <span>Pago forwarder</span>
+                          <strong>{shipment.forwarder_payment_status || "Sin estatus"}</strong>
+                          <small>{formatDate(shipment.forwarder_payment_due)}</small>
+                        </div>
+                        <div>
+                          <span>Mercancía</span>
+                          <strong>{shipment.goods_summary || "Sin descripción"}</strong>
+                          <small>{formatMoney(shipment.total_usd)}</small>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              ) : (
+                <div className="card dir-empty">No hay embarques en el período y etapa seleccionados.</div>
+              )}
             </>
           ) : null}
         </div>

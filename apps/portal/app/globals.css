@@ -1683,6 +1683,29 @@ tbody tr:hover {
   color: var(--text-muted);
 }
 
+.dir-period-card,
+.dir-stage-card {
+  border-radius: 24px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+
+.dir-period-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.dir-period-grid,
+.dir-movement-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.dir-period-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .dir-stats-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1725,6 +1748,8 @@ tbody tr:hover {
 }
 
 .dir-map-card,
+.dir-stage-card,
+.dir-period-card,
 .dir-side-card,
 .dir-meta-card,
 .dir-shipment-card {
@@ -1754,6 +1779,87 @@ tbody tr:hover {
 .dir-side-stack {
   display: grid;
   gap: 14px;
+}
+
+.dir-stage-flow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.dir-stage-node {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 18px 14px 14px;
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.dir-stage-node.active {
+  border-color: color-mix(in srgb, var(--stage-color, #0f766e) 30%, white);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--stage-color, #0f766e) 12%, white);
+}
+
+.dir-stage-node strong {
+  font-size: 0.92rem;
+}
+
+.dir-stage-node small {
+  color: var(--text-muted);
+}
+
+.dir-stage-link {
+  position: absolute;
+  top: 34px;
+  right: -16px;
+  width: 20px;
+  height: 3px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.dir-stage-marker {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 2px solid var(--stage-color, #94a3b8);
+  background: color-mix(in srgb, var(--stage-color, #94a3b8) 10%, white);
+}
+
+.dir-stage-marker span {
+  color: #0f172a;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.dir-movement-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dir-movement-grid div {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+}
+
+.dir-movement-grid span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dir-movement-grid strong {
+  font-size: 1.2rem;
 }
 
 .dir-map-shell {
@@ -1944,6 +2050,54 @@ tbody tr:hover {
   border-radius: 999px;
 }
 
+.dir-package-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dir-package-stop {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding: 12px 10px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+}
+
+.dir-package-link {
+  position: absolute;
+  top: 18px;
+  right: -14px;
+  width: 18px;
+  height: 2px;
+  background: #cbd5e1;
+}
+
+.dir-package-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid #94a3b8;
+  background: transparent;
+}
+
+.dir-package-completed .dir-package-dot,
+.dir-package-current .dir-package-dot {
+  border-color: var(--mile-color, #0f766e);
+  background: var(--mile-color, #0f766e);
+}
+
+.dir-package-stop strong {
+  font-size: 0.84rem;
+}
+
+.dir-package-stop small {
+  color: var(--text-muted);
+}
+
 .dir-milestones {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2070,12 +2224,16 @@ tbody tr:hover {
   .trk-facts,
   .trk-readout,
   .dir-controls,
+  .dir-period-grid,
   .dir-stats-grid,
   .dir-main-grid,
   .dir-meta-grid,
   .dir-cards-grid,
   .dir-info-grid,
   .dir-footer-grid,
+  .dir-stage-flow,
+  .dir-movement-grid,
+  .dir-package-track,
   .dir-milestones,
   .dir-breakdown-grid,
   .treasury-hero-grid,

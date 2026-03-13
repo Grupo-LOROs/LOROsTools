@@ -14,7 +14,7 @@ import tempfile
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl.utils import column_index_from_string
-from reportlab.graphics.shapes import Circle, Drawing, Line, Path, Rect, String
+from reportlab.graphics.shapes import Circle, Drawing, Line, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -142,6 +142,8 @@ class ExecutiveShipment:
     incoterm: str | None = None
     total_usd: float | None = None
     source_updated_at: str | None = None
+    reference_date: str | None = None
+    reference_label: str | None = None
     stage_key: str = "planned"
     stage_label: str = "Programación"
     stage_color: str = "#94a3b8"
@@ -391,6 +393,25 @@ def _next_future_event(shipment: ExecutiveShipment, today: date) -> tuple[str | 
     return label, raw
 
 
+def _reference_date_for(shipment: ExecutiveShipment) -> tuple[str | None, str | None]:
+    candidates = [
+        ("Entrega en almacén", shipment.warehouse_request_date),
+        ("Despacho", shipment.dispatch_date),
+        ("Cobro de pedimento", shipment.pedimento_charge_date),
+        ("ETA", shipment.eta),
+        ("ETD", shipment.etd),
+        ("Pago a proveedor", shipment.provider_payment_due),
+        ("Pago a forwarder", shipment.forwarder_payment_due),
+    ]
+    for label, raw in candidates:
+        if raw:
+            return label, raw
+
+    if shipment.source_updated_at:
+        return "Actualización", shipment.source_updated_at[:10]
+    return None, None
+
+
 def _attention_for(shipment: ExecutiveShipment, today: date) -> tuple[str, str | None]:
     if _status_is_pending(shipment.provider_payment_status):
         due = _coerce_date(shipment.provider_payment_due)
@@ -466,6 +487,7 @@ def _enrich_executive_status(shipment: ExecutiveShipment) -> None:
     shipment.destination_geo = _geocode_port(shipment.destination_port)
     shipment.milestones = milestones
     shipment.next_event_label, shipment.next_event_date = _next_future_event(shipment, today)
+    shipment.reference_label, shipment.reference_date = _reference_date_for(shipment)
     shipment.attention_level, shipment.attention_reason = _attention_for(shipment, today)
 
 
@@ -528,6 +550,192 @@ def _build_terminal_breakdown(shipments: list[ExecutiveShipment]) -> list[dict[s
     return [{"label": label, "count": count} for label, count in counts.most_common(4)]
 
 
+def _coerce_row_date(row: dict[str, Any], field: str) -> date | None:
+    return _coerce_date(row.get(field))
+
+
+def _scope_bounds(scope: str, year: int | None, month: int | None, week: int | None) -> tuple[date | None, date | None]:
+    today = date.today()
+    if scope == "all":
+        return None, None
+    if scope == "rolling30":
+        return today, today + timedelta(days=30)
+    if scope == "year" and year:
+        return date(year, 1, 1), date(year, 12, 31)
+    if scope == "month" and year and month:
+        start = date(year, month, 1)
+        end = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1) - timedelta(days=1)
+        return start, end
+    if scope == "week" and year and week:
+        start = date.fromisocalendar(year, week, 1)
+        return start, start + timedelta(days=6)
+    return None, None
+
+
+def _period_label(scope: str, year: int | None, month: int | None, week: int | None) -> str:
+    months = {
+        1: "Enero",
+        2: "Febrero",
+        3: "Marzo",
+        4: "Abril",
+        5: "Mayo",
+        6: "Junio",
+        7: "Julio",
+        8: "Agosto",
+        9: "Septiembre",
+        10: "Octubre",
+        11: "Noviembre",
+        12: "Diciembre",
+    }
+    if scope == "rolling30":
+        return "Próximos 30 días"
+    if scope == "year" and year:
+        return f"Año {year}"
+    if scope == "month" and year and month:
+        return f"{months.get(month, 'Mes')} {year}"
+    if scope == "week" and year and week:
+        start = date.fromisocalendar(year, week, 1)
+        end = start + timedelta(days=6)
+        return f"Semana {week} · {start.isoformat()} a {end.isoformat()}"
+    return "Todo el histórico"
+
+
+def _row_in_period(row: dict[str, Any], scope: str, year: int | None, month: int | None, week: int | None) -> bool:
+    if scope == "all":
+        return True
+    reference_date = _coerce_row_date(row, "reference_date")
+    if reference_date is None:
+        return False
+    start, end = _scope_bounds(scope, year, month, week)
+    if start is None or end is None:
+        return True
+    return start <= reference_date <= end
+
+
+def _build_overview_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total_usd = round(sum(float(item.get("total_usd") or 0) for item in rows), 2)
+    total_usd_count = len([item for item in rows if item.get("total_usd") is not None])
+    upcoming_arrivals = len(
+        [
+            item
+            for item in rows
+            if isinstance(item.get("days_to_eta"), int) and 0 <= int(item["days_to_eta"]) <= 14 and item.get("stage_key") != "delivered"
+        ]
+    )
+    overdue = len([item for item in rows if item.get("attention_level") == "risk"])
+    return {
+        "shipments": len(rows),
+        "delivered": len([item for item in rows if item.get("stage_key") == "delivered"]),
+        "active": len([item for item in rows if item.get("stage_key") != "delivered"]),
+        "pending_provider_payment": len([item for item in rows if _status_is_pending(item.get("provider_payment_status"))]),
+        "pending_forwarder_payment": len([item for item in rows if _status_is_pending(item.get("forwarder_payment_status"))]),
+        "upcoming_arrivals": upcoming_arrivals,
+        "at_risk": overdue,
+        "with_eta": len([item for item in rows if item.get("eta")]),
+        "with_dispatch": len([item for item in rows if item.get("dispatch_date")]),
+        "with_reference_date": len([item for item in rows if item.get("reference_date")]),
+        "total_usd": total_usd if total_usd_count else None,
+        "total_usd_count": total_usd_count,
+    }
+
+
+def _build_stage_breakdown_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts = Counter(str(item.get("stage_key") or "") for item in rows)
+    return [
+        {"key": key, "label": label, "count": counts.get(key, 0), "color": color}
+        for key, label, color in EXECUTIVE_STAGE_META
+    ]
+
+
+def _build_alerts_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered = [
+        item
+        for item in rows
+        if item.get("attention_level") in {"risk", "watch"} and item.get("attention_reason")
+    ]
+    filtered.sort(key=lambda item: (0 if item.get("attention_level") == "risk" else 1, str(item.get("shipment_id") or item.get("id") or "")))
+    alerts = []
+    for item in filtered[:8]:
+        alerts.append(
+            {
+                "shipment_id": item.get("id"),
+                "level": item.get("attention_level"),
+                "title": item.get("attention_reason"),
+                "detail": f'{item.get("order_number") or item.get("id")} · {item.get("supplier_display") or item.get("supplier_name") or "Proveedor sin identificar"}',
+            }
+        )
+    return alerts
+
+
+def _build_supplier_breakdown_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts = Counter(str(item.get("supplier_display") or item.get("supplier_name") or "Sin proveedor").strip() for item in rows)
+    return [{"label": label, "count": count} for label, count in counts.most_common(6)]
+
+
+def _build_terminal_breakdown_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts = Counter(str(item.get("terminal") or "Sin terminal").strip() for item in rows)
+    return [{"label": label, "count": count} for label, count in counts.most_common(4)]
+
+
+def _build_movement_summary_from_rows(
+    rows: list[dict[str, Any]],
+    scope: str,
+    year: int | None,
+    month: int | None,
+    week: int | None,
+) -> list[dict[str, Any]]:
+    start, end = _scope_bounds(scope, year, month, week)
+    if start is None or end is None:
+        start = date.min
+        end = date.max
+
+    def count(field: str) -> int:
+        return len(
+            [
+                item
+                for item in rows
+                if (resolved := _coerce_row_date(item, field)) is not None and start <= resolved <= end
+            ]
+        )
+
+    return [
+        {"key": "etd", "label": "Salidas (ETD)", "count": count("etd")},
+        {"key": "eta", "label": "Arribos (ETA)", "count": count("eta")},
+        {"key": "dispatch", "label": "Despachos", "count": count("dispatch_date")},
+        {"key": "delivered", "label": "Entregas", "count": count("warehouse_request_date")},
+    ]
+
+
+def _filter_payload(
+    payload: dict[str, Any],
+    scope: str,
+    year: int | None,
+    month: int | None,
+    week: int | None,
+) -> dict[str, Any]:
+    rows = [row for row in payload["shipments"] if _row_in_period(row, scope, year, month, week)]
+    report_period = {
+        "scope": scope,
+        "year": year,
+        "month": month,
+        "week": week,
+        "label": _period_label(scope, year, month, week),
+        "shipments": len(rows),
+    }
+    return {
+        "generated_at": payload["generated_at"],
+        "data_source": payload["data_source"],
+        "report_period": report_period,
+        "overview": _build_overview_from_rows(rows),
+        "movement_summary": _build_movement_summary_from_rows(rows, scope, year, month, week),
+        "stage_breakdown": _build_stage_breakdown_from_rows(rows),
+        "supplier_breakdown": _build_supplier_breakdown_from_rows(rows),
+        "terminal_breakdown": _build_terminal_breakdown_from_rows(rows),
+        "alerts": _build_alerts_from_rows(rows),
+        "shipments": rows,
+    }
+
+
 def _build_overview(shipments: list[ExecutiveShipment], routes: list[ExecutiveRoute]) -> dict[str, Any]:
     total_usd = round(sum(item.total_usd or 0 for item in shipments), 2)
     total_usd_count = len([item for item in shipments if item.total_usd is not None])
@@ -548,6 +756,9 @@ def _build_overview(shipments: list[ExecutiveShipment], routes: list[ExecutiveRo
         "pending_forwarder_payment": len([item for item in shipments if _status_is_pending(item.forwarder_payment_status)]),
         "upcoming_arrivals": upcoming_arrivals,
         "at_risk": overdue,
+        "with_eta": len([item for item in shipments if item.eta]),
+        "with_dispatch": len([item for item in shipments if item.dispatch_date]),
+        "with_reference_date": len([item for item in shipments if item.reference_date]),
         "total_usd": total_usd if total_usd_count else None,
         "total_usd_count": total_usd_count,
         "coverage_pct": int(round((len(routes) / max(len(shipments), 1)) * 100)),
@@ -637,7 +848,22 @@ def _build_executive_payload(
             "updated_at": source_updated_at,
             "used_history": use_importaciones_history,
         },
+        "report_period": {
+            "scope": "all",
+            "year": None,
+            "month": None,
+            "week": None,
+            "label": "Todo el histórico",
+            "shipments": len(ordered),
+        },
         "overview": _build_overview(ordered, routes),
+        "movement_summary": _build_movement_summary_from_rows(
+            [asdict(item) for item in ordered],
+            "all",
+            None,
+            None,
+            None,
+        ),
         "stage_breakdown": stage_breakdown,
         "supplier_breakdown": _build_supplier_breakdown(ordered),
         "terminal_breakdown": _build_terminal_breakdown(ordered),
@@ -768,47 +994,40 @@ def _stage_bar_drawing(stage_breakdown: list[dict[str, Any]], width: float = 520
     return drawing
 
 
-def _project_to_map(location: ExecutiveLocation, width: float, height: float) -> tuple[float, float]:
-    x = (location.lng + 180.0) / 360.0 * width
-    y = height - ((location.lat + 90.0) / 180.0 * height)
-    return x, y
-
-
-def _route_map_drawing(routes: list[dict[str, Any]], width: float = 520, height: float = 220) -> Drawing:
+def _stage_tracker_drawing(stage_breakdown: list[dict[str, Any]], width: float = 690, height: float = 112) -> Drawing:
     drawing = Drawing(width, height)
-    drawing.add(Rect(0, 0, width, height, rx=18, ry=18, fillColor=colors.HexColor("#eff6ff"), strokeWidth=0))
-    for step in range(1, 5):
-        y = height * step / 5
-        drawing.add(Line(0, y, width, y, strokeColor=colors.HexColor("#dbeafe"), strokeWidth=0.7))
-    for step in range(1, 6):
-        x = width * step / 6
-        drawing.add(Line(x, 0, x, height, strokeColor=colors.HexColor("#dbeafe"), strokeWidth=0.7))
+    x_positions = [48 + index * ((width - 96) / max(len(stage_breakdown) - 1, 1)) for index in range(len(stage_breakdown))]
+    y = 54
+    drawing.add(Line(x_positions[0], y, x_positions[-1], y, strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=4))
 
-    labeled: set[str] = set()
-    for item in routes[:8]:
-        origin = item.get("origin")
-        destination = item.get("destination")
-        if not origin or not destination:
-            continue
-        start = ExecutiveLocation(**origin)
-        end = ExecutiveLocation(**destination)
-        sx, sy = _project_to_map(start, width, height)
-        ex, ey = _project_to_map(end, width, height)
-        mid_x = (sx + ex) / 2
-        control_y = min(height - 18, max(20, (sy + ey) / 2 + 32))
-        path = Path(strokeColor=colors.HexColor(item["color"]), strokeWidth=max(1.4, min(item["count"], 4)), fillColor=None)
-        path.moveTo(sx, sy)
-        path.curveTo(mid_x, control_y, mid_x, control_y, ex, ey)
-        drawing.add(path)
-        drawing.add(Circle(sx, sy, 3.2, fillColor=colors.HexColor("#0f172a"), strokeColor=None))
-        drawing.add(Circle(ex, ey, 3.2, fillColor=colors.HexColor("#0f172a"), strokeColor=None))
-        if start.label not in labeled:
-            labeled.add(start.label)
-            drawing.add(String(sx + 5, sy + 5, start.label, fontName="Helvetica", fontSize=7, fillColor=colors.HexColor("#0f172a")))
-        if end.label not in labeled:
-            labeled.add(end.label)
-            drawing.add(String(ex + 5, ey - 10, end.label, fontName="Helvetica", fontSize=7, fillColor=colors.HexColor("#0f172a")))
+    for index, item in enumerate(stage_breakdown):
+        x = x_positions[index]
+        fill = colors.HexColor(item["color"]) if item["count"] > 0 else colors.white
+        stroke = colors.HexColor(item["color"])
+        drawing.add(Circle(x, y, 11, fillColor=fill, strokeColor=stroke, strokeWidth=2))
+        drawing.add(String(x - 30, y + 24, item["label"], fontName="Helvetica-Bold", fontSize=8, fillColor=colors.HexColor("#0f172a")))
+        drawing.add(String(x - 8, y - 3, str(item["count"]), fontName="Helvetica-Bold", fontSize=8, fillColor=colors.white if item["count"] > 0 else colors.HexColor("#64748b")))
     return drawing
+
+
+def _movement_summary_table(items: list[dict[str, Any]]) -> Table:
+    rows = [["Movimiento", "Cantidad"]]
+    rows.extend([[item["label"], str(item["count"])] for item in items])
+    table = Table(rows, colWidths=[2.9 * inch, 1.15 * inch], repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e0f2fe")),
+                ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    return table
 
 
 def _shipment_card(shipment: dict[str, Any], styles) -> Table:
@@ -870,9 +1089,10 @@ def _build_pdf(payload: dict[str, Any]) -> bytes:
     story: list[Any] = []
     overview = payload["overview"]
     data_source = payload["data_source"]
-    routes = payload["routes"]
     alerts = payload["alerts"]
     shipments = payload["shipments"]
+    report_period = payload.get("report_period") or {"label": "Todo el histórico"}
+    movement_summary = payload.get("movement_summary") or []
 
     hero = Table(
         [
@@ -880,11 +1100,11 @@ def _build_pdf(payload: dict[str, Any]) -> bytes:
                 [
                     Paragraph("Seguimiento ejecutivo de importaciones", styles["ExecHeroTitle"]),
                     Paragraph(
-                        "Vista de dirección con hitos, riesgos, pagos, cobertura de rutas y estado consolidado del portafolio.",
+                        "Vista de dirección con estado actual por etapa, alertas operativas y lectura ejecutiva del portafolio.",
                         styles["ExecHeroBody"],
                     ),
                     Paragraph(
-                        f'Fuente: {data_source["label"]} | Generado: {payload["generated_at"][:16].replace("T", " ")}',
+                        f'Período: {report_period["label"]} | Fuente: {data_source["label"]} | Generado: {payload["generated_at"][:16].replace("T", " ")}',
                         styles["ExecHeroBody"],
                     ),
                 ]
@@ -913,19 +1133,20 @@ def _build_pdf(payload: dict[str, Any]) -> bytes:
         _metric_card("Activos", str(overview["active"]), styles),
         _metric_card("Riesgo", str(overview["at_risk"]), styles),
         _metric_card("Arribos 14 días", str(overview["upcoming_arrivals"]), styles),
-        _metric_card("Rutas visibles", str(overview["with_route_data"]), styles),
+        _metric_card("Con ETA", str(overview.get("with_eta", 0)), styles),
     ]
     metrics_table = Table([metrics[:3], metrics[3:]], colWidths=[3.2 * inch, 3.2 * inch, 3.2 * inch])
     metrics_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story.append(metrics_table)
 
-    story.append(Paragraph("Distribución por etapa", styles["ExecSection"]))
+    story.append(Paragraph("Estado actual por etapa", styles["ExecSection"]))
     story.append(_stage_bar_drawing(payload["stage_breakdown"]))
-    story.append(Spacer(1, 0.14 * inch))
+    story.append(Spacer(1, 0.1 * inch))
+    story.append(_stage_tracker_drawing(payload["stage_breakdown"]))
 
-    if routes:
-        story.append(Paragraph("Mapa ejecutivo de rutas", styles["ExecSection"]))
-        story.append(_route_map_drawing(routes))
+    if movement_summary:
+        story.append(Paragraph("Movimientos del período", styles["ExecSection"]))
+        story.append(_movement_summary_table(movement_summary))
 
     if alerts:
         story.append(Paragraph("Alertas prioritarias", styles["ExecSection"]))
@@ -1020,6 +1241,10 @@ async def export_executive_tracking_pdf(
     tracking_file: UploadFile | None = File(default=None),
     use_latest_template: bool = Form(default=True),
     use_importaciones_history: bool = Form(default=True),
+    period_scope: str = Form(default="all"),
+    period_year: int | None = Form(default=None),
+    period_month: int | None = Form(default=None),
+    period_week: int | None = Form(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ):
@@ -1046,7 +1271,8 @@ async def export_executive_tracking_pdf(
             use_importaciones_history=use_importaciones_history,
         )
 
-    pdf_bytes = _build_pdf(payload)
+    filtered_payload = _filter_payload(payload, period_scope, period_year, period_month, period_week)
+    pdf_bytes = _build_pdf(filtered_payload)
     filename = f"seguimiento-importaciones-direccion-{date.today().isoformat()}.pdf"
     return StreamingResponse(
         BytesIO(pdf_bytes),
