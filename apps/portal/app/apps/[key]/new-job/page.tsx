@@ -144,7 +144,7 @@ export default function NewJobPage() {
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
         >
-          Arrastra archivos aquÃ­ o haz clic para seleccionar
+          Arrastra archivos aquí o haz clic para seleccionar
         </div>
         <input
           ref={inputRef}
@@ -219,5 +219,6 @@ export default function NewJobPage() {
     </>
   );
 }
+
 
 

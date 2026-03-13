@@ -135,8 +135,8 @@ APPS = [
     },
     {
         "key": "cuentas_por_pagar_autorizacion_pagos",
-        "name": "Cuentas por pagar - Autorización de pagos",
-        "unit": "cuentas_por_pagar",
+        "name": "ERA Cuentas por Pagar - Autorización de pagos",
+        "unit": "era_cuentas_por_pagar",
         "mode": "batch",
         "spec": {
             "inputs": [{"type": "xlsx", "multiple": False}],

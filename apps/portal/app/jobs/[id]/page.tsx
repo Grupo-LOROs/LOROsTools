@@ -91,10 +91,10 @@ export default function JobDetailPage() {
   async function deleteJob() {
     if (!job) return;
     if (job.status === "running") {
-      setError("No se puede borrar un trabajo en ejecuciÃ³n.");
+      setError("No se puede borrar un trabajo en ejecución.");
       return;
     }
-    if (!confirm(`Â¿Eliminar trabajo ${job.id}? Esta acciÃ³n no se puede deshacer.`)) {
+    if (!confirm(`¿Eliminar trabajo ${job.id}? Esta acción no se puede deshacer.`)) {
       return;
     }
 
@@ -252,13 +252,13 @@ export default function JobDetailPage() {
 
           {job.status === "failed" && (
             <div className="error-msg">
-              El trabajo fallÃ³. {job.message || "Revisa los logs para mÃ¡s detalle."}
+              El trabajo falló. {job.message || "Revisa los logs para más detalle."}
             </div>
           )}
 
           {!isTerminal && (
             <p className="text-muted mt-4" style={{ textAlign: "center" }}>
-              Actualizando automÃ¡ticamente cada 3 segundos...
+              Actualizando automáticamente cada 3 segundos...
             </p>
           )}
         </>
@@ -266,5 +266,6 @@ export default function JobDetailPage() {
     </>
   );
 }
+
 
 

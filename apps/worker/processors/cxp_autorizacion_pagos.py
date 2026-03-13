@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -35,7 +35,7 @@ WEEKDAY_LABELS = {
     6: "DOMINGO",
 }
 SIGNATURES = [
-    ("ELABORÓ", "Juan Carlos Rodriguez Silva", "Cuentas por Pagar"),
+    ("ELABORÓ", "Juan Carlos Rodriguez Silva", "ERA Cuentas por Pagar"),
     ("REVISÓ", "C.P. Jesús Salvador Chavez Martinez", "Coordinación Gerencia Administrativa"),
     ("AUTORIZÓ", "C.P. Ana Laura Jiménez Lara", "Dirección Grupo Loros"),
 ]
@@ -377,12 +377,12 @@ def _detail_table(
     for entry in entries:
         data.append(
             [
-                _paragraph(entry.razon or "—", styles["cell"]),
-                _paragraph(entry.familia or "—", styles["cell"]),
-                _paragraph(entry.proyecto or "—", styles["cell"]),
-                _paragraph(entry.proveedor or "—", styles["cell"]),
-                _paragraph(entry.concepto or "—", styles["cell"]),
-                _paragraph(entry.detalle or "—", styles["cell"]),
+                _paragraph(entry.razon or "-", styles["cell"]),
+                _paragraph(entry.familia or "-", styles["cell"]),
+                _paragraph(entry.proyecto or "-", styles["cell"]),
+                _paragraph(entry.proveedor or "-", styles["cell"]),
+                _paragraph(entry.concepto or "-", styles["cell"]),
+                _paragraph(entry.detalle or "-", styles["cell"]),
                 _paragraph(_format_money(entry.importe), styles["cell-right"]),
             ]
         )
@@ -554,3 +554,4 @@ def process(ctx: JobContext) -> str:
     _build_pdf(snapshot, output_path)
     ctx.report_progress(90, "PDF generado correctamente.")
     return ctx.output_rel(filename)
+

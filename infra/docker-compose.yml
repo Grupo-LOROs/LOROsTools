@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     env_file:
       - ./.env
     volumes:
@@ -15,6 +16,7 @@ services:
 
   api:
     build: ../apps/api
+    restart: unless-stopped
     env_file:
       - ./.env
     environment:
@@ -32,6 +34,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: https://api.grupo-loros.com
         NEXT_PUBLIC_BASE_PATH: /tools
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: https://api.grupo-loros.com
       NEXT_PUBLIC_BASE_PATH: /tools
@@ -43,6 +46,7 @@ services:
 
   worker:
     build: ../apps/worker
+    restart: unless-stopped
     env_file:
       - ./.env
     environment:
@@ -56,6 +60,7 @@ services:
 
   caddy:
     image: caddy:2
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:

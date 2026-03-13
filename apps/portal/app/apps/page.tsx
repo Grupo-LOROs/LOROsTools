@@ -20,6 +20,7 @@ const UNIT_LABELS: Record<string, string> = {
   era_ventas: "ERA Ventas",
   era_compras: "ERA Compras",
   era_proyectos: "ERA Proyectos",
+  era_cuentas_por_pagar: "ERA Cuentas por Pagar",
   tesoreria: "Tesorería",
 };
 
