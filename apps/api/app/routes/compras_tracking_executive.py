@@ -16,7 +16,8 @@ from fastapi.responses import StreamingResponse
 from openpyxl.utils import column_index_from_string
 from reportlab.graphics.shapes import Circle, Drawing, Line, Rect, String
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import landscape, letter
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -877,11 +878,22 @@ def _styles():
     styles = getSampleStyleSheet()
     styles.add(
         ParagraphStyle(
+            name="ExecHeroKicker",
+            parent=styles["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#93c5fd"),
+            spaceAfter=4,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
             name="ExecHeroTitle",
             parent=styles["Heading1"],
             fontName="Helvetica-Bold",
-            fontSize=22,
-            leading=26,
+            fontSize=20,
+            leading=24,
             textColor=colors.white,
             spaceAfter=6,
         )
@@ -891,8 +903,8 @@ def _styles():
             name="ExecHeroBody",
             parent=styles["BodyText"],
             fontName="Helvetica",
-            fontSize=10,
-            leading=14,
+            fontSize=9,
+            leading=13,
             textColor=colors.HexColor("#dbeafe"),
         )
     )
@@ -901,10 +913,10 @@ def _styles():
             name="ExecSection",
             parent=styles["Heading2"],
             fontName="Helvetica-Bold",
-            fontSize=13,
-            leading=16,
+            fontSize=12,
+            leading=15,
             textColor=colors.HexColor("#0f172a"),
-            spaceAfter=8,
+            spaceAfter=6,
             spaceBefore=10,
         )
     )
@@ -933,8 +945,8 @@ def _styles():
             name="ExecMetric",
             parent=styles["Heading3"],
             fontName="Helvetica-Bold",
-            fontSize=16,
-            leading=18,
+            fontSize=17,
+            leading=19,
             textColor=colors.HexColor("#0f172a"),
         )
     )
@@ -948,19 +960,123 @@ def _styles():
             textColor=colors.HexColor("#64748b"),
         )
     )
+    styles.add(
+        ParagraphStyle(
+            name="ExecBodyRight",
+            parent=styles["BodyText"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=12,
+            alignment=TA_RIGHT,
+            textColor=colors.HexColor("#334155"),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ExecCardTitle",
+            parent=styles["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=14,
+            textColor=colors.HexColor("#0f172a"),
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="ExecBadge",
+            parent=styles["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#0f172a"),
+        )
+    )
     return styles
 
 
-def _metric_card(label: str, value: str, styles) -> Table:
-    table = Table(
-        [[Paragraph(label, styles["ExecMetricLabel"]), Paragraph(value, styles["ExecMetric"])]],
-        colWidths=[1.55 * inch],
+def _format_money_short(value: float | None) -> str:
+    if value is None:
+        return "Sin monto"
+    abs_value = abs(value)
+    if abs_value >= 1_000_000:
+        return f"USD {value / 1_000_000:.1f} M"
+    if abs_value >= 1_000:
+        return f"USD {value / 1_000:.0f} mil"
+    return f"USD {value:,.0f}"
+
+
+def _safe_text(value: Any, fallback: str = "Sin dato") -> str:
+    text = str(value or "").strip()
+    return text or fallback
+
+
+def _wrap_card(
+    content: Any,
+    width: float,
+    *,
+    background: str = "#ffffff",
+    border: str = "#dbeafe",
+    padding: int = 12,
+) -> Table:
+    table = Table([[content]], colWidths=[width])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(background)),
+                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor(border)),
+                ("LEFTPADDING", (0, 0), (-1, -1), padding),
+                ("RIGHTPADDING", (0, 0), (-1, -1), padding),
+                ("TOPPADDING", (0, 0), (-1, -1), padding),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
+            ]
+        )
     )
+    return table
+
+
+def _badge(label: str, background: str, styles, *, width: float = 0.92 * inch, text_color: str = "#ffffff") -> Table:
+    table = Table([[Paragraph(label, styles["ExecBadge"])]], colWidths=[width])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(background)),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor(text_color)),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    return table
+
+
+def _progress_bar_drawing(progress_pct: int, color: str, width: float, height: float = 11) -> Drawing:
+    drawing = Drawing(width, height)
+    normalized = max(0, min(progress_pct, 100))
+    drawing.add(Rect(0, 0, width, height, fillColor=colors.HexColor("#e2e8f0"), strokeWidth=0))
+    drawing.add(Rect(0, 0, width * (normalized / 100), height, fillColor=colors.HexColor(color), strokeWidth=0))
+    drawing.add(Rect(0, 0, width, height, strokeColor=colors.HexColor("#cbd5e1"), fillColor=None, strokeWidth=0.7))
+    return drawing
+
+
+def _metric_card(label: str, value: str, note: str, accent: str, styles, width: float) -> Table:
+    content = [
+        Paragraph(label, styles["ExecMetricLabel"]),
+        Spacer(1, 0.04 * inch),
+        Paragraph(value, styles["ExecMetric"]),
+        Spacer(1, 0.04 * inch),
+        Paragraph(note, styles["ExecMuted"]),
+    ]
+    table = Table([[content]], colWidths=[width])
     table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), colors.white),
                 ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#dbeafe")),
+                ("LINEBEFORE", (0, 0), (0, -1), 4, colors.HexColor(accent)),
                 ("LEFTPADDING", (0, 0), (-1, -1), 12),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 12),
                 ("TOPPADDING", (0, 0), (-1, -1), 10),
@@ -971,49 +1087,49 @@ def _metric_card(label: str, value: str, styles) -> Table:
     return table
 
 
-def _stage_bar_drawing(stage_breakdown: list[dict[str, Any]], width: float = 520, height: float = 54) -> Drawing:
-    drawing = Drawing(width, height)
+def _stage_breakdown_card(stage_breakdown: list[dict[str, Any]], styles, width: float) -> Table:
     total = sum(item["count"] for item in stage_breakdown) or 1
-    x = 0
+    inner_width = max(width - 20, 3.6 * inch)
+    badge_width = 0.72 * inch
+    label_width = 2.25 * inch
+    bar_width = max(inner_width - badge_width - label_width - 8, 2.2 * inch)
+    rows: list[list[Any]] = []
+
     for item in stage_breakdown:
-        segment_width = width * (item["count"] / total)
-        drawing.add(Rect(x, 24, segment_width, 12, fillColor=colors.HexColor(item["color"]), strokeWidth=0))
-        if segment_width > 52:
-            drawing.add(
-                String(
-                    x + 4,
-                    6,
-                    f'{item["label"]}: {item["count"]}',
-                    fontName="Helvetica",
-                    fontSize=7,
-                    fillColor=colors.HexColor("#334155"),
-                )
-            )
-        x += segment_width
-    drawing.add(Rect(0, 24, width, 12, strokeColor=colors.HexColor("#cbd5e1"), fillColor=None, strokeWidth=1))
-    return drawing
+        share = int(round((item["count"] / total) * 100)) if total else 0
+        badge_color = item["color"] if item["count"] > 0 else "#f8fafc"
+        badge_text = "#ffffff" if item["count"] > 0 else "#64748b"
+        rows.append(
+            [
+                _badge(str(item["count"]), badge_color, styles, width=badge_width, text_color=badge_text),
+                [
+                    Paragraph(item["label"], styles["ExecBody"]),
+                    Paragraph(f"{share}% del portafolio", styles["ExecMuted"]),
+                ],
+                _progress_bar_drawing(share, item["color"], bar_width, 8),
+            ]
+        )
+
+    table = Table(rows, colWidths=[badge_width, label_width, bar_width])
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LINEBELOW", (0, 0), (-1, -2), 0.5, colors.HexColor("#e2e8f0")),
+            ]
+        )
+    )
+    return _wrap_card(table, width, background="#ffffff", border="#dbeafe", padding=10)
 
 
-def _stage_tracker_drawing(stage_breakdown: list[dict[str, Any]], width: float = 690, height: float = 112) -> Drawing:
-    drawing = Drawing(width, height)
-    x_positions = [48 + index * ((width - 96) / max(len(stage_breakdown) - 1, 1)) for index in range(len(stage_breakdown))]
-    y = 54
-    drawing.add(Line(x_positions[0], y, x_positions[-1], y, strokeColor=colors.HexColor("#cbd5e1"), strokeWidth=4))
-
-    for index, item in enumerate(stage_breakdown):
-        x = x_positions[index]
-        fill = colors.HexColor(item["color"]) if item["count"] > 0 else colors.white
-        stroke = colors.HexColor(item["color"])
-        drawing.add(Circle(x, y, 11, fillColor=fill, strokeColor=stroke, strokeWidth=2))
-        drawing.add(String(x - 30, y + 24, item["label"], fontName="Helvetica-Bold", fontSize=8, fillColor=colors.HexColor("#0f172a")))
-        drawing.add(String(x - 8, y - 3, str(item["count"]), fontName="Helvetica-Bold", fontSize=8, fillColor=colors.white if item["count"] > 0 else colors.HexColor("#64748b")))
-    return drawing
-
-
-def _movement_summary_table(items: list[dict[str, Any]]) -> Table:
+def _movement_summary_table(items: list[dict[str, Any]], width: float) -> Table:
     rows = [["Movimiento", "Cantidad"]]
     rows.extend([[item["label"], str(item["count"])] for item in items])
-    table = Table(rows, colWidths=[2.9 * inch, 1.15 * inch], repeatRows=1)
+    table = Table(rows, colWidths=[width * 0.74, width * 0.26], repeatRows=1)
     table.setStyle(
         TableStyle(
             [
@@ -1024,6 +1140,8 @@ def _movement_summary_table(items: list[dict[str, Any]]) -> Table:
                 ("FONTSIZE", (0, 0), (-1, -1), 8),
                 ("TOPPADDING", (0, 0), (-1, -1), 6),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
             ]
         )
     )
@@ -1178,6 +1296,392 @@ def _build_pdf(payload: dict[str, Any]) -> bytes:
         story.append(Spacer(1, 0.12 * inch))
 
     doc.build(story)
+    return buffer.getvalue()
+
+
+def _summary_list_card(title: str, items: list[dict[str, Any]], styles, width: float) -> Table:
+    inner_width = max(width - 20, 2.6 * inch)
+    if items:
+        inner_rows = [[Paragraph(item["label"], styles["ExecBody"]), Paragraph(str(item["count"]), styles["ExecBodyRight"])] for item in items]
+        inner = Table(inner_rows, colWidths=[inner_width - 0.86 * inch, 0.86 * inch])
+        inner.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LINEBELOW", (0, 0), (-1, -2), 0.5, colors.HexColor("#e2e8f0")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        content = [Paragraph(title, styles["ExecCardTitle"]), Spacer(1, 0.06 * inch), inner]
+    else:
+        content = [
+            Paragraph(title, styles["ExecCardTitle"]),
+            Spacer(1, 0.06 * inch),
+            Paragraph("No hay datos suficientes para esta concentración en el período.", styles["ExecMuted"]),
+        ]
+    return _wrap_card(content, width, background="#ffffff", border="#dbeafe", padding=10)
+
+
+def _alert_card(item: dict[str, Any], styles, width: float) -> Table:
+    label, color = _status_style(item["level"])
+    if item["level"] == "risk":
+        background = "#fef2f2"
+        border = "#fecaca"
+    elif item["level"] == "watch":
+        background = "#fff7ed"
+        border = "#fed7aa"
+    else:
+        background = "#f0fdfa"
+        border = "#99f6e4"
+
+    inner_width = max(width - 24, 3.2 * inch)
+    header = Table(
+        [[_badge(label, color, styles, width=0.9 * inch), Paragraph(_safe_text(item["shipment_id"]), styles["ExecMuted"])]],
+        colWidths=[0.96 * inch, inner_width - 0.96 * inch],
+    )
+    header.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+    return _wrap_card(
+        [
+            header,
+            Spacer(1, 0.05 * inch),
+            Paragraph(_safe_text(item["title"]), styles["ExecCardTitle"]),
+            Paragraph(_safe_text(item["detail"], "Sin detalle adicional."), styles["ExecMuted"]),
+        ],
+        width,
+        background=background,
+        border=border,
+        padding=10,
+    )
+
+
+def _fact_block(label: str, value: str, styles, width: float) -> Table:
+    table = Table(
+        [[Paragraph(label, styles["ExecMetricLabel"]), Paragraph(value, styles["ExecBody"])]],
+        colWidths=[width],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#e2e8f0")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    return table
+
+
+def _shipment_card_vertical(shipment: dict[str, Any], styles, width: float) -> Table:
+    status_label, status_color = _status_style(shipment["attention_level"])
+    _, stage_color = _stage_meta(shipment.get("stage_key") or "planned")
+    title = shipment.get("order_number") or shipment.get("container") or shipment["id"]
+    subtitle = shipment.get("supplier_display") or shipment.get("supplier_name") or "Proveedor sin identificar"
+    next_event = "Sin siguiente fecha"
+    if shipment.get("next_event_label") and shipment.get("next_event_date"):
+        next_event = f'{shipment["next_event_label"]}: {shipment["next_event_date"]}'
+    route = "Ruta no disponible"
+    if shipment.get("origin_port") and shipment.get("destination_port"):
+        route = f'{shipment["origin_port"]} -> {shipment["destination_port"]}'
+
+    eta_dispatch = "Sin ETA ni despacho"
+    if shipment.get("eta") and shipment.get("dispatch_date"):
+        eta_dispatch = f'ETA {shipment["eta"]} | Despacho {shipment["dispatch_date"]}'
+    elif shipment.get("eta"):
+        eta_dispatch = f'ETA {shipment["eta"]}'
+    elif shipment.get("dispatch_date"):
+        eta_dispatch = f'Despacho {shipment["dispatch_date"]}'
+
+    reference_line = "Sin fecha de referencia"
+    if shipment.get("reference_label") and shipment.get("reference_date"):
+        reference_line = f'{shipment["reference_label"]}: {shipment["reference_date"]}'
+
+    payment_parts = []
+    if shipment.get("provider_payment_status"):
+        payment_parts.append(f'Proveedor: {_safe_text(shipment["provider_payment_status"])}')
+    if shipment.get("forwarder_payment_status"):
+        payment_parts.append(f'Forwarder: {_safe_text(shipment["forwarder_payment_status"])}')
+    payments = " | ".join(payment_parts) if payment_parts else "Sin alertas de pago registradas"
+
+    meta_primary = " | ".join(
+        [
+            subtitle,
+            f'Contenedor {_safe_text(shipment.get("container"))}',
+            f'Terminal {_safe_text(shipment.get("terminal"))}',
+        ]
+    )
+
+    meta_secondary_parts = [f"Ruta {route}"]
+    if shipment.get("incoterm"):
+        meta_secondary_parts.append(f'Incoterm {_safe_text(shipment["incoterm"])}')
+    if shipment.get("pedimento"):
+        meta_secondary_parts.append(f'Pedimento {_safe_text(shipment["pedimento"])}')
+    if shipment.get("total_usd") is not None:
+        meta_secondary_parts.append(_format_money_short(shipment["total_usd"]))
+    meta_secondary = " | ".join(meta_secondary_parts)
+
+    inner_width = max(width - 24, 4.5 * inch)
+    header = Table(
+        [[Paragraph(_safe_text(title), styles["ExecCardTitle"]), _badge(status_label, status_color, styles, width=1.02 * inch)]],
+        colWidths=[inner_width - 1.02 * inch, 1.02 * inch],
+    )
+    header.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+
+    progress_header = Table(
+        [
+            [
+                Paragraph(f'Etapa actual: <b>{_safe_text(shipment["stage_label"])}</b>', styles["ExecBody"]),
+                Paragraph(f'{shipment["progress_pct"]}%', styles["ExecBodyRight"]),
+            ]
+        ],
+        colWidths=[inner_width - 0.85 * inch, 0.85 * inch],
+    )
+    progress_header.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0)]))
+
+    fact_width = (inner_width - 8) / 2
+    facts = Table(
+        [
+            [
+                _fact_block("Próximo movimiento", next_event, styles, fact_width),
+                _fact_block("Referencia de corte", reference_line, styles, fact_width),
+            ],
+            [
+                _fact_block("ETA / despacho", eta_dispatch, styles, fact_width),
+                _fact_block("Pagos", payments, styles, fact_width),
+            ],
+        ],
+        colWidths=[fact_width, fact_width],
+    )
+    facts.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+
+    content = [
+        header,
+        Spacer(1, 0.04 * inch),
+        Paragraph(meta_primary, styles["ExecMuted"]),
+        Paragraph(meta_secondary, styles["ExecMuted"]),
+        Spacer(1, 0.06 * inch),
+        progress_header,
+        Spacer(1, 0.03 * inch),
+        _progress_bar_drawing(shipment["progress_pct"], stage_color, inner_width, 10),
+        Spacer(1, 0.08 * inch),
+        facts,
+    ]
+
+    if shipment.get("goods_summary"):
+        content.extend(
+            [
+                Spacer(1, 0.07 * inch),
+                Paragraph("Mercancía", styles["ExecMetricLabel"]),
+                Paragraph(_safe_text(shipment["goods_summary"]), styles["ExecBody"]),
+            ]
+        )
+
+    if shipment.get("attention_reason"):
+        content.extend(
+            [
+                Spacer(1, 0.06 * inch),
+                Paragraph("Atención actual", styles["ExecMetricLabel"]),
+                Paragraph(_safe_text(shipment["attention_reason"]), styles["ExecMuted"]),
+            ]
+        )
+
+    return _wrap_card(content, width, background="#ffffff", border="#dbeafe", padding=12)
+
+
+def _draw_pdf_chrome(canvas, doc):
+    canvas.saveState()
+    page_width, _ = doc.pagesize
+    footer_y = 0.32 * inch
+    canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
+    canvas.setLineWidth(0.7)
+    canvas.line(doc.leftMargin, footer_y + 10, page_width - doc.rightMargin, footer_y + 10)
+    canvas.setFont("Helvetica", 8)
+    canvas.setFillColor(colors.HexColor("#64748b"))
+    canvas.drawString(doc.leftMargin, footer_y, "Seguimiento ejecutivo de importaciones")
+    canvas.drawRightString(page_width - doc.rightMargin, footer_y, f"Página {canvas.getPageNumber()}")
+    canvas.restoreState()
+
+
+def _build_pdf(payload: dict[str, Any]) -> bytes:
+    styles = _styles()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.45 * inch,
+        rightMargin=0.45 * inch,
+        topMargin=0.45 * inch,
+        bottomMargin=0.45 * inch,
+    )
+    story: list[Any] = []
+    content_width = doc.width
+    overview = payload["overview"]
+    data_source = payload["data_source"]
+    alerts = payload["alerts"]
+    shipments = payload["shipments"]
+    report_period = payload.get("report_period") or {"label": "Todo el histórico"}
+    movement_summary = payload.get("movement_summary") or []
+    total_usd = overview.get("total_usd")
+    total_usd_count = overview.get("total_usd_count", 0)
+    latest_source = data_source.get("updated_at")
+    source_note = f"Última actualización del Excel: {latest_source[:16].replace('T', ' ')}" if latest_source else "Base actual disponible."
+
+    hero = Table(
+        [
+            [
+                [
+                    Paragraph("REPORTE EJECUTIVO", styles["ExecHeroKicker"]),
+                    Paragraph("Seguimiento ejecutivo de importaciones", styles["ExecHeroTitle"]),
+                    Paragraph(
+                        "Vista de dirección con estado actual por etapa, alertas operativas y lectura ejecutiva del portafolio.",
+                        styles["ExecHeroBody"],
+                    ),
+                    Paragraph(f'Período: {report_period["label"]} | Fuente: {data_source["label"]}', styles["ExecHeroBody"]),
+                    Paragraph(
+                        f'Generado: {payload["generated_at"][:16].replace("T", " ")} | {source_note}',
+                        styles["ExecHeroBody"],
+                    ),
+                ]
+            ]
+        ],
+        colWidths=[content_width],
+    )
+    hero.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
+                ("BOX", (0, 0), (-1, -1), 0, colors.white),
+                ("LEFTPADDING", (0, 0), (-1, -1), 18),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 18),
+                ("TOPPADDING", (0, 0), (-1, -1), 18),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+            ]
+        )
+    )
+    story.append(hero)
+    story.append(Spacer(1, 0.18 * inch))
+
+    metric_width = (content_width - 8) / 2
+    value_metric = _format_money_short(total_usd) if total_usd is not None else str(overview.get("with_reference_date", 0))
+    value_note = (
+        f"{total_usd_count} embarques con monto capturado"
+        if total_usd is not None
+        else f'{overview.get("with_reference_date", 0)} con fecha de referencia'
+    )
+    metrics = [
+        _metric_card("Embarques", str(overview["shipments"]), "Corte incluido en este reporte", "#0ea5e9", styles, metric_width),
+        _metric_card("Activos", str(overview["active"]), "Aún no marcados como entregados", "#0f766e", styles, metric_width),
+        _metric_card("Entregados", str(overview["delivered"]), "Cerrados en almacén o entrega final", "#22c55e", styles, metric_width),
+        _metric_card("Riesgo", str(overview["at_risk"]), "Con alerta alta o atraso relevante", "#dc2626", styles, metric_width),
+        _metric_card("Arribos 14 días", str(overview["upcoming_arrivals"]), "Ventana operativa inmediata", "#f59e0b", styles, metric_width),
+        _metric_card("Valor / referencia", value_metric, value_note, "#64748b", styles, metric_width),
+    ]
+    metrics_table = Table(
+        [[metrics[0], metrics[1]], [metrics[2], metrics[3]], [metrics[4], metrics[5]]],
+        colWidths=[content_width / 2, content_width / 2],
+    )
+    metrics_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+    story.append(metrics_table)
+
+    story.append(Paragraph("Estado actual por etapa", styles["ExecSection"]))
+    story.append(_stage_breakdown_card(payload["stage_breakdown"], styles, content_width))
+
+    if movement_summary:
+        story.append(Paragraph("Movimientos del período", styles["ExecSection"]))
+        story.append(_movement_summary_table(movement_summary, content_width))
+
+    story.append(Paragraph("Concentración operativa", styles["ExecSection"]))
+    concentration = Table(
+        [
+            [
+                _summary_list_card("Proveedores con más embarques", payload.get("supplier_breakdown", [])[:4], styles, metric_width),
+                _summary_list_card("Terminales más usadas", payload.get("terminal_breakdown", [])[:4], styles, metric_width),
+            ]
+        ],
+        colWidths=[content_width / 2, content_width / 2],
+    )
+    concentration.setStyle(
+        TableStyle(
+            [
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(concentration)
+
+    story.append(Paragraph("Alertas prioritarias", styles["ExecSection"]))
+    if alerts:
+        for item in alerts[:3]:
+            story.append(_alert_card(item, styles, content_width))
+            story.append(Spacer(1, 0.08 * inch))
+    else:
+        story.append(
+            _wrap_card(
+                Paragraph("No hay alertas prioritarias en el período seleccionado.", styles["ExecMuted"]),
+                content_width,
+                background="#f8fafc",
+                border="#e2e8f0",
+                padding=10,
+            )
+        )
+
+    if shipments:
+        story.append(PageBreak())
+        story.append(Paragraph("Portafolio de embarques", styles["ExecSection"]))
+        story.append(Paragraph("Tarjetas compactas para lectura vertical en celular y corte ejecutivo.", styles["ExecMuted"]))
+        story.append(Spacer(1, 0.06 * inch))
+        for shipment in shipments:
+            story.append(_shipment_card_vertical(shipment, styles, content_width))
+            story.append(Spacer(1, 0.12 * inch))
+    else:
+        story.append(Spacer(1, 0.14 * inch))
+        story.append(
+            _wrap_card(
+                [
+                    Paragraph("Sin embarques en el período", styles["ExecCardTitle"]),
+                    Paragraph(
+                        "El filtro aplicado no devolvió embarques con fecha de referencia dentro del rango seleccionado.",
+                        styles["ExecMuted"],
+                    ),
+                ],
+                content_width,
+                background="#f8fafc",
+                border="#e2e8f0",
+                padding=12,
+            )
+        )
+
+    doc.build(story, onFirstPage=_draw_pdf_chrome, onLaterPages=_draw_pdf_chrome)
     return buffer.getvalue()
 
 
