@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from datetime import datetime
+import json
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -9,6 +10,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from app.routes.treasury_bank_movements import (
     TreasuryMovement,
     TreasuryStatement,
+    _analysis_payload,
     _detect_bank,
     _extract_counterparty,
     _movement_category,
@@ -20,6 +22,7 @@ from app.routes.treasury_bank_movements import (
     _parse_santander,
     _render_balance_workbook,
     _render_movement_workbook,
+    _statements_from_analysis_json,
 )
 
 
@@ -291,6 +294,40 @@ class TreasuryBankMovementsTests(unittest.TestCase):
             wb = load_workbook(output_path, data_only=False)
             ws = wb.active
             self.assertEqual(ws["H5"].value, 183871.45)
+
+    def test_analysis_payload_can_be_reused_without_reparsing_pdfs(self):
+        statement = TreasuryStatement(
+            id="bbva-3599",
+            source_file="bbva-3599.pdf",
+            bank="BBVA",
+            ocr_used=False,
+            account_number="0197083599",
+            account_holder="DEESA",
+            closing_balance=183871.45,
+            raw_text="BBVA",
+            movements=[
+                TreasuryMovement(
+                    statement_id="bbva-3599",
+                    source_file="bbva-3599.pdf",
+                    bank="BBVA",
+                    sequence=1,
+                    account_number="0197083599",
+                    movement_date="2026-03-21",
+                    description="DEPOSITO",
+                    credit=1500.0,
+                    balance=183871.45,
+                )
+            ],
+        )
+
+        payload = _analysis_payload([statement])
+        rebuilt = _statements_from_analysis_json(json.dumps(payload))
+
+        self.assertIsNotNone(rebuilt)
+        self.assertEqual(len(rebuilt or []), 1)
+        self.assertEqual((rebuilt or [])[0].source_file, "bbva-3599.pdf")
+        self.assertEqual(len((rebuilt or [])[0].movements), 1)
+        self.assertEqual((rebuilt or [])[0].movements[0].credit, 1500.0)
 
     def _build_movements_workbook(self, path: Path):
         wb = Workbook()

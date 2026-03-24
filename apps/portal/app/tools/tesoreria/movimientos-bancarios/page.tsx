@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiUpload, apiUploadDownload } from "@/lib/api";
 
 type Summary = {
@@ -300,9 +300,6 @@ function draftAmount(draft: MovementDraft) {
 }
 
 export default function TreasuryBankMovementsPage() {
-  const pdfInputRef = useRef<HTMLInputElement | null>(null);
-  const movementTemplateRef = useRef<HTMLInputElement | null>(null);
-
   const [files, setFiles] = useState<File[]>([]);
   const [movementTemplateFile, setMovementTemplateFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -369,6 +366,19 @@ export default function TreasuryBankMovementsPage() {
     resetWorkbookPreparation();
   }
 
+  function handlePdfSelection(nextFiles: File[]) {
+    clearAllResults();
+    const accepted = filterPdfFiles(nextFiles);
+    if (!accepted.length) {
+      setFiles([]);
+      setError("Selecciona al menos un archivo PDF válido.");
+      return;
+    }
+
+    setError(nextFiles.length !== accepted.length ? "Se ignoraron archivos que no eran PDF." : null);
+    setFiles((current) => mergeFiles(current, accepted));
+  }
+
   async function analyzeMovements() {
     if (!files.length) {
       setError("Debes subir al menos un PDF.");
@@ -404,7 +414,11 @@ export default function TreasuryBankMovementsPage() {
     setError(null);
     try {
       const formData = new FormData();
-      files.forEach((file) => formData.append("files", file));
+      if (analysis) {
+        formData.append("analysis_json", JSON.stringify(analysis));
+      } else {
+        files.forEach((file) => formData.append("files", file));
+      }
       formData.append("movements_template", movementTemplateFile);
 
       const data = await apiUpload<PreparedMovementsResponse>("/tools/tesoreria/bank-movements/prepare", formData);
@@ -531,7 +545,6 @@ export default function TreasuryBankMovementsPage() {
       <div className="card mb-4 treasury-upload">
         <div
           className={`dropzone treasury-dropzone ${dragActive ? "active" : ""}`}
-          onClick={() => pdfInputRef.current?.click()}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragActive(true);
@@ -547,26 +560,30 @@ export default function TreasuryBankMovementsPage() {
           onDrop={(event) => {
             event.preventDefault();
             setDragActive(false);
-            clearAllResults();
-            setFiles((current) => mergeFiles(current, filterPdfFiles(Array.from(event.dataTransfer.files))));
+            handlePdfSelection(Array.from(event.dataTransfer.files));
           }}
         >
           <div className="treasury-drop-title">Arrastra aquí los estados de cuenta PDF</div>
-          <div className="gi-helper">También puedes hacer clic para seleccionarlos. Puedes mezclar bancos.</div>
+          <div className="gi-helper">Puedes mezclar bancos. Debajo también tienes el selector normal de archivos.</div>
         </div>
 
-        <input
-          ref={pdfInputRef}
-          hidden
-          type="file"
-          accept=".pdf,application/pdf"
-          multiple
-          onChange={(event) => {
-            clearAllResults();
-            setFiles((current) => mergeFiles(current, filterPdfFiles(Array.from(event.target.files || []))));
-            if (pdfInputRef.current) pdfInputRef.current.value = "";
-          }}
-        />
+        <label className="treasury-file-field">
+          <span>Seleccionar estados de cuenta PDF</span>
+          <input
+            type="file"
+            accept=".pdf,application/pdf"
+            multiple
+            onChange={(event) => {
+              handlePdfSelection(Array.from(event.target.files || []));
+              event.currentTarget.value = "";
+            }}
+          />
+          <small>
+            {files.length
+              ? `${files.length} PDF(s) cargado(s).`
+              : "Elige uno o varios PDFs desde el selector normal si el arrastre no te funciona."}
+          </small>
+        </label>
 
         {files.length ? (
           <div className="treasury-file-chips">
@@ -603,13 +620,12 @@ export default function TreasuryBankMovementsPage() {
             <div className="treasury-table-head">
               <div>
                 <h3>Llenado del Excel de movimientos</h3>
-                <p>Este paso es opcional y corre aparte para que la carga de PDFs siga siendo rápida.</p>
+                <p>
+                  Este paso es opcional y corre aparte. Si ya analizaste los PDFs, aquí se reutiliza ese análisis para
+                  que el Excel se prepare mucho más rápido.
+                </p>
               </div>
               <div className="treasury-toolbar-actions">
-                <button type="button" className="treasury-template-card" onClick={() => movementTemplateRef.current?.click()}>
-                  <strong>Excel de movimientos</strong>
-                  <span>{movementTemplateFile ? movementTemplateFile.name : "Sube el consecutivo bancario"}</span>
-                </button>
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -621,18 +637,32 @@ export default function TreasuryBankMovementsPage() {
               </div>
             </div>
 
-            <input
-              ref={movementTemplateRef}
-              hidden
-              type="file"
-              accept=".xlsx,.xlsm"
-              onChange={(event) => {
-                resetWorkbookPreparation();
-                const next = event.target.files?.[0] || null;
-                setMovementTemplateFile(next);
-                if (movementTemplateRef.current) movementTemplateRef.current.value = "";
-              }}
-            />
+            <div className="treasury-upload-grid">
+              <label className="treasury-file-field">
+                <span>Excel de movimientos</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xlsm"
+                  onChange={(event) => {
+                    resetWorkbookPreparation();
+                    const next = event.target.files?.[0] || null;
+                    setMovementTemplateFile(next);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <small>
+                  {movementTemplateFile
+                    ? `Seleccionado: ${movementTemplateFile.name}`
+                    : "Sube el consecutivo bancario para preparar el llenado."}
+                </small>
+              </label>
+            </div>
+
+            {preparingWorkbook ? (
+              <div className="treasury-progress-note">
+                Armando sugerencias y filas del Excel con los movimientos ya analizados...
+              </div>
+            ) : null}
 
             {movementTemplate ? (
               <>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiUpload, apiUploadDownload } from "@/lib/api";
 
 type Summary = {
@@ -113,13 +113,11 @@ function balanceLabel(update: BalanceUpdate) {
 }
 
 export default function TesoreriaFormatoAsistidoPage() {
-  const pdfInputRef = useRef<HTMLInputElement | null>(null);
-  const templateInputRef = useRef<HTMLInputElement | null>(null);
-
   const [files, setFiles] = useState<File[]>([]);
   const [balanceTemplateFile, setBalanceTemplateFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
-  const [processing, setProcessing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -134,9 +132,44 @@ export default function TesoreriaFormatoAsistidoPage() {
     setBalanceUpdates([]);
   }
 
-  async function prepareBalances() {
+  function handlePdfSelection(nextFiles: File[]) {
+    clearResults();
+    const accepted = filterPdfFiles(nextFiles);
+    if (!accepted.length) {
+      setFiles([]);
+      setError("Selecciona al menos un archivo PDF válido.");
+      return;
+    }
+
+    setError(nextFiles.length !== accepted.length ? "Se ignoraron archivos que no eran PDF." : null);
+    setFiles((current) => mergeFiles(current, accepted));
+  }
+
+  async function analyzeStatements() {
     if (!files.length) {
       setError("Debes subir al menos un PDF.");
+      return;
+    }
+
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      files.forEach((file) => formData.append("files", file));
+      const data = await apiUpload<AnalysisResponse>("/tools/tesoreria/bank-movements/analyze", formData);
+      setAnalysis(data);
+      setBalanceTemplate(null);
+      setBalanceUpdates([]);
+    } catch (err: any) {
+      setError(err?.message || "No se pudo analizar la información bancaria.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function prepareBalances() {
+    if (!analysis) {
+      setError("Primero analiza los PDFs bancarios.");
       return;
     }
     if (!balanceTemplateFile) {
@@ -144,11 +177,11 @@ export default function TesoreriaFormatoAsistidoPage() {
       return;
     }
 
-    setProcessing(true);
+    setPreparing(true);
     setError(null);
     try {
       const formData = new FormData();
-      files.forEach((file) => formData.append("files", file));
+      formData.append("analysis_json", JSON.stringify(analysis));
       formData.append("balances_template", balanceTemplateFile);
 
       const data = await apiUpload<PreparedBalancesResponse>("/tools/tesoreria/bank-movements/prepare", formData);
@@ -158,7 +191,7 @@ export default function TesoreriaFormatoAsistidoPage() {
     } catch (err: any) {
       setError(err?.message || "No se pudo preparar la actualización de saldos.");
     } finally {
-      setProcessing(false);
+      setPreparing(false);
     }
   }
 
@@ -198,17 +231,17 @@ export default function TesoreriaFormatoAsistidoPage() {
         <div className="treasury-kicker">Tesorería</div>
         <h1>Actualización de saldos diarios</h1>
         <p>
-          Esta vista es solo para saldos. Sube los estados de cuenta PDF y el Excel de saldos diarios para actualizar
-          las columnas de pesos y dólares con el saldo final detectado por cuenta.
+          Esta vista es solo para saldos. Primero analiza los estados de cuenta PDF y después sube el Excel de saldos
+          diarios para actualizar las columnas de pesos y dólares con el saldo final detectado por cuenta.
         </p>
         <div className="treasury-hero-grid">
           <div className="treasury-hero-card">
-            <strong>Entrada</strong>
-            <span>PDFs bancarios y el Excel de saldos diarios que usa Tesorería.</span>
+            <strong>Paso 1</strong>
+            <span>Sube los PDFs bancarios y confirma los saldos detectados por cuenta.</span>
           </div>
           <div className="treasury-hero-card">
-            <strong>Detección</strong>
-            <span>Se empatan cuentas por banco, número y tipo para proponer el saldo correcto.</span>
+            <strong>Paso 2</strong>
+            <span>Sube el Excel de saldos diarios para preparar la actualización sin releer los PDFs.</span>
           </div>
           <div className="treasury-hero-card">
             <strong>Salida</strong>
@@ -222,7 +255,6 @@ export default function TesoreriaFormatoAsistidoPage() {
       <div className="card mb-4 treasury-upload">
         <div
           className={`dropzone treasury-dropzone ${dragActive ? "active" : ""}`}
-          onClick={() => pdfInputRef.current?.click()}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragActive(true);
@@ -238,26 +270,30 @@ export default function TesoreriaFormatoAsistidoPage() {
           onDrop={(event) => {
             event.preventDefault();
             setDragActive(false);
-            clearResults();
-            setFiles((current) => mergeFiles(current, filterPdfFiles(Array.from(event.dataTransfer.files))));
+            handlePdfSelection(Array.from(event.dataTransfer.files));
           }}
         >
           <div className="treasury-drop-title">Arrastra aquí los estados de cuenta PDF</div>
           <div className="gi-helper">Esta app solo usará los saldos finales detectados por cuenta.</div>
         </div>
 
-        <input
-          ref={pdfInputRef}
-          hidden
-          type="file"
-          accept=".pdf,application/pdf"
-          multiple
-          onChange={(event) => {
-            clearResults();
-            setFiles((current) => mergeFiles(current, filterPdfFiles(Array.from(event.target.files || []))));
-            if (pdfInputRef.current) pdfInputRef.current.value = "";
-          }}
-        />
+        <label className="treasury-file-field">
+          <span>Seleccionar estados de cuenta PDF</span>
+          <input
+            type="file"
+            accept=".pdf,application/pdf"
+            multiple
+            onChange={(event) => {
+              handlePdfSelection(Array.from(event.target.files || []));
+              event.currentTarget.value = "";
+            }}
+          />
+          <small>
+            {files.length
+              ? `${files.length} PDF(s) cargado(s).`
+              : "Elige uno o varios PDFs desde el selector normal si el arrastre no te funciona."}
+          </small>
+        </label>
 
         {files.length ? (
           <div className="treasury-file-chips">
@@ -277,29 +313,9 @@ export default function TesoreriaFormatoAsistidoPage() {
           </div>
         ) : null}
 
-        <div className="treasury-template-grid">
-          <button type="button" className="treasury-template-card" onClick={() => templateInputRef.current?.click()}>
-            <strong>Excel de saldos diarios</strong>
-            <span>{balanceTemplateFile ? balanceTemplateFile.name : "Sube el archivo que contiene los saldos por banco y cuenta."}</span>
-          </button>
-        </div>
-
-        <input
-          ref={templateInputRef}
-          hidden
-          type="file"
-          accept=".xlsx,.xlsm"
-          onChange={(event) => {
-            clearResults();
-            const next = event.target.files?.[0] || null;
-            setBalanceTemplateFile(next);
-            if (templateInputRef.current) templateInputRef.current.value = "";
-          }}
-        />
-
         <div className="treasury-actions">
-          <button className="btn btn-primary" type="button" onClick={prepareBalances} disabled={processing}>
-            {processing ? "Preparando saldos..." : "Detectar saldos"}
+          <button className="btn btn-primary" type="button" onClick={analyzeStatements} disabled={analyzing}>
+            {analyzing ? "Analizando PDFs..." : "Analizar saldos"}
           </button>
           <span className="text-muted">
             {files.length ? `${files.length} PDF(s) listo(s)` : "Sin PDFs seleccionados"}
@@ -309,6 +325,51 @@ export default function TesoreriaFormatoAsistidoPage() {
 
       {analysis ? (
         <>
+          <div className="card mb-4 treasury-review-card">
+            <div className="treasury-table-head">
+              <div>
+                <h3>Preparar Excel de saldos</h3>
+                <p>Con el análisis ya hecho, este paso solo arma la actualización del archivo de saldos diarios.</p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={prepareBalances}
+                disabled={preparing || !balanceTemplateFile}
+              >
+                {preparing ? "Preparando saldos..." : "Preparar Excel de saldos"}
+              </button>
+            </div>
+
+            <div className="treasury-upload-grid">
+              <label className="treasury-file-field">
+                <span>Excel de saldos diarios</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.xlsm"
+                  onChange={(event) => {
+                    setBalanceTemplate(null);
+                    setBalanceUpdates([]);
+                    const next = event.target.files?.[0] || null;
+                    setBalanceTemplateFile(next);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <small>
+                  {balanceTemplateFile
+                    ? `Seleccionado: ${balanceTemplateFile.name}`
+                    : "Sube el archivo que contiene los saldos por banco y cuenta."}
+                </small>
+              </label>
+            </div>
+
+            {preparing ? (
+              <div className="treasury-progress-note">
+                Empatando cuentas del Excel con los saldos finales encontrados en los PDFs analizados...
+              </div>
+            ) : null}
+          </div>
+
           <div className="treasury-summary-grid mb-4">
             <div className="card treasury-summary-card">
               <span>Estados analizados</span>

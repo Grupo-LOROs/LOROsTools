@@ -1352,7 +1352,8 @@ tbody tr:hover {
 
 .treasury-template-grid,
 .treasury-prep-grid,
-.treasury-draft-grid {
+.treasury-draft-grid,
+.treasury-upload-grid {
   display: grid;
   gap: 16px;
 }
@@ -1391,6 +1392,39 @@ tbody tr:hover {
   min-height: 172px;
 }
 
+.treasury-file-field {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(138, 92, 0, 0.12);
+  border-radius: 18px;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.treasury-file-field span {
+  font-weight: 700;
+}
+
+.treasury-file-field small {
+  color: var(--text-muted);
+}
+
+.treasury-file-field input[type="file"] {
+  color: var(--text);
+  max-width: 100%;
+}
+
+.treasury-file-field input[type="file"]::file-selector-button {
+  background: #fff7e6;
+  border: 1px solid rgba(138, 92, 0, 0.18);
+  border-radius: 999px;
+  color: #7a4100;
+  cursor: pointer;
+  font-weight: 700;
+  margin-right: 12px;
+  padding: 10px 14px;
+}
+
 .treasury-drop-title {
   font-size: 1.1rem;
   font-weight: 700;
@@ -1426,6 +1460,14 @@ tbody tr:hover {
 .treasury-copied {
   color: #2c6b2f;
   font-weight: 700;
+}
+
+.treasury-progress-note {
+  background: #fffaf0;
+  border: 1px solid rgba(138, 92, 0, 0.12);
+  border-radius: 16px;
+  color: #7a4100;
+  padding: 14px 16px;
 }
 
 .treasury-summary-grid {
@@ -1694,8 +1736,14 @@ tbody tr:hover {
   gap: 16px;
 }
 
+.table-wrap {
+  overflow: auto;
+  width: 100%;
+}
+
 .treasury-table {
   border-collapse: collapse;
+  min-width: 980px;
   width: 100%;
 }
 

@@ -8,7 +8,7 @@ import tempfile
 import unicodedata
 import zipfile
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,9 +20,9 @@ from openpyxl.formula.translate import Translator
 from sqlalchemy.orm import Session
 from openpyxl.utils.cell import range_boundaries
 
-from app.db.models import AppDefinition, User
+from app.db.models import AppDefinition, User, UserAppPermission
 from app.db.session import get_db
-from app.deps import ensure_app_access, require_user
+from app.deps import require_user
 
 try:
     import fitz  # PyMuPDF
@@ -32,7 +32,10 @@ except Exception:
 
 router = APIRouter(prefix="/tools/tesoreria/bank-movements", tags=["tools-tesoreria-bank-movements"])
 
-TREASURY_APP_KEY = "tesoreria_automatizacion_saldos"
+TREASURY_APP_KEYS = (
+    "tesoreria_automatizacion_saldos",
+    "tesoreria_generacion_conciliacion",
+)
 DATE_SLASH_RX = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 DATE_MON_RX = re.compile(r"^\d{2}-[A-Za-z]{3}-\d{4}$")
 SANTANDER_ACCOUNT_RX = re.compile(r"^\d{11}$")
@@ -1050,6 +1053,72 @@ def _template_ext_ok(filename: str | None) -> bool:
     return Path(filename or "").suffix.lower() in {".xlsx", ".xlsm"}
 
 
+def _ensure_treasury_access(db: Session, user: User) -> None:
+    available_keys = [
+        app_key
+        for app_key in TREASURY_APP_KEYS
+        if (app := db.get(AppDefinition, app_key)) and app.enabled
+    ]
+    if not available_keys:
+        raise HTTPException(status_code=404, detail="La herramienta de Tesorería no está disponible.")
+
+    if user.is_admin:
+        return
+
+    has_permission = (
+        db.query(UserAppPermission.id)
+        .filter(UserAppPermission.user_id == user.id, UserAppPermission.app_key.in_(available_keys))
+        .first()
+    )
+    if not has_permission:
+        raise HTTPException(status_code=403, detail="No tienes permiso para esta herramienta de Tesorería.")
+
+
+def _statement_from_analysis_payload(payload: dict[str, Any]) -> TreasuryStatement:
+    movement_values = []
+    for raw_movement in payload.get("movements") or []:
+        if not isinstance(raw_movement, dict):
+            continue
+        movement_values.append(
+            TreasuryMovement(
+                **{
+                    field_def.name: raw_movement.get(field_def.name)
+                    for field_def in fields(TreasuryMovement)
+                    if field_def.name in raw_movement
+                }
+            )
+        )
+
+    statement_values = {
+        field_def.name: payload.get(field_def.name)
+        for field_def in fields(TreasuryStatement)
+        if field_def.name != "movements" and field_def.name in payload
+    }
+    return TreasuryStatement(**statement_values, movements=movement_values)
+
+
+def _statements_from_analysis_json(analysis_json: str | None) -> list[TreasuryStatement] | None:
+    if not analysis_json or not analysis_json.strip():
+        return None
+
+    try:
+        payload = json.loads(analysis_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el análisis enviado: {exc}") from exc
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("statements"), list):
+        raise HTTPException(status_code=400, detail="El análisis enviado no tiene el formato esperado.")
+
+    statements = [
+        _statement_from_analysis_payload(item)
+        for item in payload["statements"]
+        if isinstance(item, dict)
+    ]
+    if not statements:
+        raise HTTPException(status_code=400, detail="El análisis enviado no contiene estados de cuenta.")
+    return statements
+
+
 def _as_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -1804,17 +1873,33 @@ async def _parse_uploaded_statements(files: list[UploadFile], root: Path) -> lis
     return statements
 
 
+async def _resolve_input_statements(
+    files: list[UploadFile] | None,
+    analysis_json: str | None,
+    root: Path,
+) -> list[TreasuryStatement]:
+    statements = _statements_from_analysis_json(analysis_json)
+    if statements is not None:
+        return statements
+
+    valid_files = [item for item in (files or []) if item.filename]
+    if not valid_files:
+        raise HTTPException(status_code=400, detail="Debes subir al menos un PDF.")
+
+    for item in valid_files:
+        if Path(item.filename or "").suffix.lower() != ".pdf":
+            raise HTTPException(status_code=400, detail=f"Solo se permiten archivos PDF. Recibí: {item.filename}")
+
+    return await _parse_uploaded_statements(valid_files, root)
+
+
 @router.post("/analyze")
 async def analyze_bank_movements(
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ):
-    app = db.get(AppDefinition, TREASURY_APP_KEY)
-    if not app or not app.enabled:
-        raise HTTPException(status_code=404, detail="La herramienta de Tesorería no está disponible.")
-
-    ensure_app_access(user, TREASURY_APP_KEY, db)
+    _ensure_treasury_access(db, user)
 
     valid_files = [item for item in files if item.filename]
     if not valid_files:
@@ -1833,25 +1918,14 @@ async def analyze_bank_movements(
 
 @router.post("/prepare")
 async def prepare_bank_templates(
-    files: list[UploadFile] = File(...),
+    files: list[UploadFile] | None = File(default=None),
     movements_template: UploadFile | None = File(None),
     balances_template: UploadFile | None = File(None),
+    analysis_json: str | None = Form(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ):
-    app = db.get(AppDefinition, TREASURY_APP_KEY)
-    if not app or not app.enabled:
-        raise HTTPException(status_code=404, detail="La herramienta de Tesorería no está disponible.")
-
-    ensure_app_access(user, TREASURY_APP_KEY, db)
-
-    valid_files = [item for item in files if item.filename]
-    if not valid_files:
-        raise HTTPException(status_code=400, detail="Debes subir al menos un PDF.")
-
-    for item in valid_files:
-        if Path(item.filename or "").suffix.lower() != ".pdf":
-            raise HTTPException(status_code=400, detail=f"Solo se permiten archivos PDF. Recibí: {item.filename}")
+    _ensure_treasury_access(db, user)
 
     if movements_template and not _template_ext_ok(movements_template.filename):
         raise HTTPException(status_code=400, detail="El Excel de movimientos debe ser .xlsx o .xlsm.")
@@ -1860,7 +1934,7 @@ async def prepare_bank_templates(
 
     with tempfile.TemporaryDirectory(prefix="bank-movements-prepare-") as temp_dir:
         root = Path(temp_dir)
-        statements = await _parse_uploaded_statements(valid_files, root)
+        statements = await _resolve_input_statements(files, analysis_json, root)
 
         movement_template_data = None
         balance_template_data = None
@@ -1887,11 +1961,7 @@ async def export_bank_templates(
     db: Session = Depends(get_db),
     user: User = Depends(require_user),
 ):
-    app = db.get(AppDefinition, TREASURY_APP_KEY)
-    if not app or not app.enabled:
-        raise HTTPException(status_code=404, detail="La herramienta de Tesorería no está disponible.")
-
-    ensure_app_access(user, TREASURY_APP_KEY, db)
+    _ensure_treasury_access(db, user)
 
     if not movements_template and not balances_template:
         raise HTTPException(status_code=400, detail="Debes subir al menos uno de los Excel para exportar.")
