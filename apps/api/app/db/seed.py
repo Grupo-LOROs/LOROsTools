@@ -113,23 +113,31 @@ APPS = [
             ],
             "outputs": [{"type": "data"}],
             "notes": {
-                "behavior": "Normaliza movimientos, detecta banco y permite copiar la tabla para pegarla rápido en Excel.",
+                "behavior": "Analiza PDFs bancarios, normaliza movimientos y opcionalmente prepara el Excel de movimientos.",
                 "ocr": "Usa OCR cuando el PDF venga escaneado o sin capa de texto.",
             },
         },
     },
     {
         "key": "tesoreria_generacion_conciliacion",
-        "name": "Tesorería - Formato asistido",
+        "name": "Tesorería - Actualización de saldos diarios",
         "unit": "tesoreria",
         "mode": "interactive",
         "ui_type": "next",
         "ui_url": "/tools/tesoreria/formato-asistido",
         "spec": {
-            "inputs": [{"type": "xlsx", "multiple": False, "optional": True}],
+            "inputs": [
+                {
+                    "type": "pdf",
+                    "multiple": True,
+                    "banks": ["Santander", "Monex", "Bajio", "BBVA", "Banregio"],
+                },
+                {"type": "xlsx", "multiple": False, "optional": True, "role": "saldos"},
+            ],
             "outputs": [{"type": "data"}],
             "notes": {
-                "status": "Pendiente de reglas por fila definidas por Tesorería.",
+                "behavior": "Actualiza el Excel de saldos diarios usando el saldo final detectado en los estados de cuenta PDF.",
+                "focus": "Solo llena saldos por cuenta; no prepara clasificaciones de movimientos.",
             },
         },
     },
