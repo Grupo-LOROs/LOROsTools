@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
-import { apiUpload } from "@/lib/api";
+import { apiUpload, apiUploadDownload } from "@/lib/api";
 
 type Summary = {
   statements: number;
@@ -69,6 +69,109 @@ type AnalysisResponse = {
   movements: Movement[];
 };
 
+type DraftValues = {
+  movement_type: string | null;
+  date: string | null;
+  company: string | null;
+  payee: string | null;
+  group: string | null;
+  business_unit: string | null;
+  project: string | null;
+  reconciliation: string | null;
+  specific_concept: string | null;
+  detailed_concept: string | null;
+  deposits: number | null;
+  withdrawals: number | null;
+  breakdown: number | null;
+  observations: string | null;
+};
+
+type DraftMovementPreview = {
+  sequence: number;
+  bank: string;
+  account_number: string | null;
+  movement_date: string | null;
+  description: string | null;
+  concept: string | null;
+  reference: string | null;
+  counterparty: string | null;
+  debit: number | null;
+  credit: number | null;
+  balance: number | null;
+};
+
+type MovementDraft = {
+  draft_id: string;
+  statement_id: string;
+  statement_label: string;
+  sheet_name: string | null;
+  sheet_options: string[];
+  suggestion_source: string;
+  suggestion_score: number;
+  matched_history_label: string | null;
+  missing_fields: string[];
+  needs_review: boolean;
+  movement: DraftMovementPreview;
+  values: DraftValues;
+};
+
+type SheetProfile = {
+  name: string;
+  bank_hint: string | null;
+  sheet_kind: string;
+  field_options: Record<string, string[]>;
+  defaults: Partial<Record<keyof DraftValues, string | null>>;
+};
+
+type MovementTemplateResponse = {
+  filename: string;
+  sheets: SheetProfile[];
+  drafts: MovementDraft[];
+  review_count: number;
+  skipped_duplicates: number;
+  unmatched_statements: string[];
+};
+
+type BalanceUpdate = {
+  id: string;
+  row_number: number;
+  bank: string | null;
+  account_label: string | null;
+  column_key: "pesos" | "dolares";
+  current_value: number | null;
+  new_value: number | null;
+  statement_id: string;
+  statement_label: string;
+  confidence: number;
+  reason: string;
+  enabled: boolean;
+};
+
+type BalanceTemplateResponse = {
+  filename: string;
+  sheet_name: string;
+  updates: BalanceUpdate[];
+  unmatched_statements: string[];
+};
+
+type PreparedResponse = {
+  analysis: AnalysisResponse;
+  movement_template: MovementTemplateResponse | null;
+  balances_template: BalanceTemplateResponse | null;
+};
+
+type EditableFieldKey =
+  | "movement_type"
+  | "company"
+  | "payee"
+  | "group"
+  | "business_unit"
+  | "project"
+  | "reconciliation"
+  | "specific_concept"
+  | "detailed_concept"
+  | "observations";
+
 const TSV_COLUMNS: Array<[keyof Movement | "amount_label", string]> = [
   ["bank", "Banco"],
   ["source_file", "Archivo"],
@@ -89,6 +192,35 @@ const TSV_COLUMNS: Array<[keyof Movement | "amount_label", string]> = [
   ["balance", "Saldo"],
 ];
 
+const MOVEMENT_TYPE_OPTIONS = ["TRANSFERENCIA", "INVERSIÓN", "DEPÓSITO", "CHEQUE", "CARGO", "ABONO"];
+
+const REVIEW_FIELDS: Array<{ key: EditableFieldKey; label: string; kind: "input" | "textarea" | "select" }> = [
+  { key: "movement_type", label: "Tipo de movimiento", kind: "select" },
+  { key: "company", label: "Empresa", kind: "input" },
+  { key: "payee", label: "A nombre de", kind: "input" },
+  { key: "group", label: "Grupo", kind: "input" },
+  { key: "business_unit", label: "Unidad de negocio", kind: "input" },
+  { key: "project", label: "Obra", kind: "input" },
+  { key: "reconciliation", label: "Conciliación", kind: "input" },
+  { key: "specific_concept", label: "Concepto específico", kind: "input" },
+  { key: "detailed_concept", label: "Concepto detallado", kind: "textarea" },
+  { key: "observations", label: "Observaciones", kind: "textarea" },
+];
+
+const FIELD_LABELS: Record<string, string> = {
+  sheet_name: "Hoja destino",
+  movement_type: "Tipo de movimiento",
+  company: "Empresa",
+  payee: "A nombre de",
+  group: "Grupo",
+  business_unit: "Unidad de negocio",
+  project: "Obra",
+  reconciliation: "Conciliación",
+  specific_concept: "Concepto específico",
+  detailed_concept: "Concepto detallado",
+  observations: "Observaciones",
+};
+
 function formatDate(value: string | null) {
   if (!value) return "Sin fecha";
   return new Date(`${value}T12:00:00`).toLocaleDateString("es-MX", {
@@ -104,10 +236,6 @@ function formatMoney(value: number | null) {
     style: "currency",
     currency: "MXN",
   }).format(value);
-}
-
-function moneyCell(value: number | null) {
-  return value == null ? "" : String(value);
 }
 
 function statementLabel(statement: Statement) {
@@ -147,18 +275,76 @@ async function copyToClipboard(text: string) {
   await navigator.clipboard.writeText(text);
 }
 
+function normalizeText(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function recomputeDraftStatus(draft: MovementDraft, sheet?: SheetProfile | null): MovementDraft {
+  const missing = new Set<string>();
+  if (!draft.sheet_name) {
+    missing.add("sheet_name");
+  }
+
+  const requiredFields: Array<EditableFieldKey> = ["movement_type", "company", "payee", "reconciliation", "detailed_concept"];
+  if (sheet) {
+    (["group", "business_unit", "project"] as EditableFieldKey[]).forEach((field) => {
+      const options = sheet.field_options[field] || [];
+      if (options.length || normalizeText(draft.values[field])) {
+        requiredFields.push(field);
+      }
+    });
+  }
+
+  requiredFields.forEach((field) => {
+    if (!normalizeText(draft.values[field])) {
+      missing.add(field);
+    }
+  });
+
+  return {
+    ...draft,
+    missing_fields: Array.from(missing),
+    needs_review: missing.size > 0 || draft.suggestion_source !== "historial",
+  };
+}
+
+function draftAmount(draft: MovementDraft) {
+  if (draft.movement.credit != null) return draft.movement.credit;
+  if (draft.movement.debit != null) return -draft.movement.debit;
+  return 0;
+}
+
+function balanceLabel(update: BalanceUpdate) {
+  return update.column_key === "dolares" ? "Saldo B dólares" : "Saldo B pesos";
+}
+
 export default function TreasuryBankMovementsPage() {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const movementTemplateRef = useRef<HTMLInputElement | null>(null);
+  const balanceTemplateRef = useRef<HTMLInputElement | null>(null);
 
   const [files, setFiles] = useState<File[]>([]);
+  const [movementsTemplate, setMovementsTemplate] = useState<File | null>(null);
+  const [balancesTemplate, setBalancesTemplate] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [movementTemplate, setMovementTemplate] = useState<MovementTemplateResponse | null>(null);
+  const [balanceTemplate, setBalanceTemplate] = useState<BalanceTemplateResponse | null>(null);
+  const [drafts, setDrafts] = useState<MovementDraft[]>([]);
+  const [balanceUpdates, setBalanceUpdates] = useState<BalanceUpdate[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [bankFilter, setBankFilter] = useState<string>("all");
   const [copied, setCopied] = useState<string | null>(null);
+  const [reviewOnly, setReviewOnly] = useState(true);
+
+  const sheetLookup = useMemo(
+    () => new Map((movementTemplate?.sheets || []).map((sheet) => [sheet.name, sheet])),
+    [movementTemplate]
+  );
 
   const selectedStatement = useMemo(
     () => analysis?.statements.find((item) => item.id === selectedId) || analysis?.statements[0] || null,
@@ -187,6 +373,23 @@ export default function TreasuryBankMovementsPage() {
     });
   }, [analysis, bankFilter, search]);
 
+  const visibleDrafts = useMemo(
+    () => (reviewOnly ? drafts.filter((item) => item.needs_review) : drafts),
+    [drafts, reviewOnly]
+  );
+
+  const reviewCount = useMemo(() => drafts.filter((item) => item.needs_review).length, [drafts]);
+  const enabledBalanceCount = useMemo(() => balanceUpdates.filter((item) => item.enabled).length, [balanceUpdates]);
+
+  function resetPreparedData() {
+    setAnalysis(null);
+    setMovementTemplate(null);
+    setBalanceTemplate(null);
+    setDrafts([]);
+    setBalanceUpdates([]);
+    setSelectedId(null);
+  }
+
   async function analyze() {
     if (!files.length) {
       setError("Debes subir al menos un PDF.");
@@ -198,9 +401,21 @@ export default function TreasuryBankMovementsPage() {
     try {
       const formData = new FormData();
       files.forEach((file) => formData.append("files", file));
-      const data = await apiUpload<AnalysisResponse>("/tools/tesoreria/bank-movements/analyze", formData);
-      setAnalysis(data);
-      setSelectedId(data.statements[0]?.id || null);
+      if (movementsTemplate) formData.append("movements_template", movementsTemplate);
+      if (balancesTemplate) formData.append("balances_template", balancesTemplate);
+
+      const data = await apiUpload<PreparedResponse>("/tools/tesoreria/bank-movements/prepare", formData);
+      const responseSheetLookup = new Map((data.movement_template?.sheets || []).map((sheet) => [sheet.name, sheet] as const));
+      setAnalysis(data.analysis);
+      setSelectedId(data.analysis.statements[0]?.id || null);
+      setMovementTemplate(data.movement_template);
+      setBalanceTemplate(data.balances_template);
+      setDrafts(
+        (data.movement_template?.drafts || []).map((draft) =>
+          recomputeDraftStatus(draft, draft.sheet_name ? responseSheetLookup.get(draft.sheet_name) || null : null)
+        )
+      );
+      setBalanceUpdates(data.balances_template?.updates || []);
     } catch (err: any) {
       setError(err?.message || "No se pudo analizar la información bancaria.");
     } finally {
@@ -208,10 +423,86 @@ export default function TreasuryBankMovementsPage() {
     }
   }
 
+  async function exportTemplates() {
+    if (!movementsTemplate && !balancesTemplate) {
+      setError("Sube al menos uno de los Excel para generar la salida.");
+      return;
+    }
+
+    setExporting(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      if (movementsTemplate) formData.append("movements_template", movementsTemplate);
+      if (balancesTemplate) formData.append("balances_template", balancesTemplate);
+      formData.append("drafts_json", JSON.stringify(drafts));
+      formData.append("balance_updates_json", JSON.stringify(balanceUpdates));
+      await apiUploadDownload("/tools/tesoreria/bank-movements/export", formData, "tesoreria_actualizada.zip");
+    } catch (err: any) {
+      setError(err?.message || "No se pudo generar el ZIP con los Excel actualizados.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleCopy(label: string, text: string) {
     await copyToClipboard(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
+  }
+
+  function updateDraft(
+    draftId: string,
+    updater: (draft: MovementDraft, sheet: SheetProfile | null) => MovementDraft
+  ) {
+    setDrafts((current) =>
+      current.map((item) => {
+        if (item.draft_id !== draftId) return item;
+        const currentSheet = item.sheet_name ? sheetLookup.get(item.sheet_name) || null : null;
+        const nextDraft = updater(item, currentSheet);
+        const nextSheetName = nextDraft.sheet_name;
+        const sheet = nextSheetName ? sheetLookup.get(nextSheetName) || null : null;
+        return recomputeDraftStatus(nextDraft, sheet);
+      })
+    );
+  }
+
+  function handleDraftFieldChange(draftId: string, field: EditableFieldKey, value: string) {
+    updateDraft(draftId, (draft) => ({
+      ...draft,
+      values: {
+        ...draft.values,
+        [field]: value || null,
+      },
+    }));
+  }
+
+  function handleDraftSheetChange(draftId: string, sheetName: string) {
+    const sheet = sheetName ? sheetLookup.get(sheetName) || null : null;
+    updateDraft(draftId, (draft) => ({
+      ...draft,
+      sheet_name: sheetName || null,
+      values: {
+        ...draft.values,
+        movement_type: draft.values.movement_type || sheet?.defaults.movement_type || draft.values.movement_type,
+        company: draft.values.company || sheet?.defaults.company || draft.values.company,
+      },
+    }));
+  }
+
+  function handleBalanceToggle(updateId: string) {
+    setBalanceUpdates((current) =>
+      current.map((item) => (item.id === updateId ? { ...item, enabled: !item.enabled } : item))
+    );
+  }
+
+  function fieldOptions(draft: MovementDraft, field: EditableFieldKey) {
+    const sheet = draft.sheet_name ? sheetLookup.get(draft.sheet_name) : undefined;
+    const options = sheet?.field_options[field] || [];
+    if (field === "movement_type") {
+      return Array.from(new Set([...MOVEMENT_TYPE_OPTIONS, ...options]));
+    }
+    return options;
   }
 
   return (
@@ -224,21 +515,21 @@ export default function TreasuryBankMovementsPage() {
         <div className="treasury-kicker">Tesorería</div>
         <h1>Captura de movimientos bancarios</h1>
         <p>
-          Sube estados de cuenta PDF de distintos bancos, obtén una tabla normalizada y copia la información directo
-          a Excel mientras se define el formato final.
+          Sube los estados de cuenta PDF y, si ya los tienes, también el Excel de movimientos y el Excel de saldos.
+          La herramienta prepara ambos archivos y deja una revisión rápida para completar lo que no salga del banco.
         </p>
         <div className="treasury-hero-grid">
           <div className="treasury-hero-card">
             <strong>Entrada</strong>
-            <span>PDFs de BBVA, Banregio, BanBajío, Monex y Santander.</span>
+            <span>PDFs bancarios y hasta dos Excel operativos: movimientos y saldos.</span>
           </div>
           <div className="treasury-hero-card">
             <strong>Proceso</strong>
-            <span>Lee texto nativo y usa OCR cuando el PDF viene escaneado.</span>
+            <span>Lee PDFs nativos u OCR, detecta cuentas y propone hoja, saldos y clasificación.</span>
           </div>
           <div className="treasury-hero-card">
             <strong>Salida</strong>
-            <span>Movimientos clasificados, listos para copiar y pegar.</span>
+            <span>ZIP con los Excel actualizados y una revisión rápida para pendientes.</span>
           </div>
         </div>
       </section>
@@ -248,7 +539,7 @@ export default function TreasuryBankMovementsPage() {
       <div className="card mb-4 treasury-upload">
         <div
           className={`dropzone treasury-dropzone ${dragActive ? "active" : ""}`}
-          onClick={() => inputRef.current?.click()}
+          onClick={() => pdfInputRef.current?.click()}
           onDragEnter={(event) => {
             event.preventDefault();
             setDragActive(true);
@@ -265,21 +556,24 @@ export default function TreasuryBankMovementsPage() {
             event.preventDefault();
             setDragActive(false);
             const dropped = Array.from(event.dataTransfer.files).filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+            resetPreparedData();
             setFiles((current) => mergeFiles(current, dropped));
           }}
         >
           <div className="treasury-drop-title">Arrastra aquí los estados de cuenta PDF</div>
           <div className="gi-helper">También puedes hacer clic para seleccionarlos. Puedes mezclar bancos.</div>
         </div>
+
         <input
-          ref={inputRef}
+          ref={pdfInputRef}
           hidden
           type="file"
           accept=".pdf"
           multiple
           onChange={(event) => {
+            resetPreparedData();
             setFiles((current) => mergeFiles(current, Array.from(event.target.files || [])));
-            if (inputRef.current) inputRef.current.value = "";
+            if (pdfInputRef.current) pdfInputRef.current.value = "";
           }}
         />
 
@@ -290,7 +584,10 @@ export default function TreasuryBankMovementsPage() {
                 key={fileKey(file)}
                 type="button"
                 className="treasury-file-chip"
-                onClick={() => setFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)))}
+                onClick={() => {
+                  resetPreparedData();
+                  setFiles((current) => current.filter((item) => fileKey(item) !== fileKey(file)));
+                }}
               >
                 {file.name} <span>×</span>
               </button>
@@ -298,12 +595,78 @@ export default function TreasuryBankMovementsPage() {
           </div>
         ) : null}
 
+        <div className="treasury-template-grid">
+          <button type="button" className="treasury-template-card" onClick={() => movementTemplateRef.current?.click()}>
+            <strong>Excel de movimientos</strong>
+            <span>{movementsTemplate ? movementsTemplate.name : "Sube el consecutivo bancario que se llena con los movimientos."}</span>
+          </button>
+          <button type="button" className="treasury-template-card" onClick={() => balanceTemplateRef.current?.click()}>
+            <strong>Excel de saldos diarios</strong>
+            <span>{balancesTemplate ? balancesTemplate.name : "Sube el consolidado diario para actualizar saldos por cuenta."}</span>
+          </button>
+        </div>
+
+        <input
+          ref={movementTemplateRef}
+          hidden
+          type="file"
+          accept=".xlsx,.xlsm"
+          onChange={(event) => {
+            resetPreparedData();
+            const next = event.target.files?.[0] || null;
+            setMovementsTemplate(next);
+            if (movementTemplateRef.current) movementTemplateRef.current.value = "";
+          }}
+        />
+
+        <input
+          ref={balanceTemplateRef}
+          hidden
+          type="file"
+          accept=".xlsx,.xlsm"
+          onChange={(event) => {
+            resetPreparedData();
+            const next = event.target.files?.[0] || null;
+            setBalancesTemplate(next);
+            if (balanceTemplateRef.current) balanceTemplateRef.current.value = "";
+          }}
+        />
+
+        {(movementsTemplate || balancesTemplate) && (
+          <div className="treasury-file-chips">
+            {movementsTemplate ? (
+              <button
+                type="button"
+                className="treasury-file-chip"
+                onClick={() => {
+                  resetPreparedData();
+                  setMovementsTemplate(null);
+                }}
+              >
+                {movementsTemplate.name} <span>×</span>
+              </button>
+            ) : null}
+            {balancesTemplate ? (
+              <button
+                type="button"
+                className="treasury-file-chip"
+                onClick={() => {
+                  resetPreparedData();
+                  setBalancesTemplate(null);
+                }}
+              >
+                {balancesTemplate.name} <span>×</span>
+              </button>
+            ) : null}
+          </div>
+        )}
+
         <div className="treasury-actions">
           <button className="btn btn-primary" type="button" onClick={analyze} disabled={processing}>
-            {processing ? "Analizando..." : "Analizar movimientos"}
+            {processing ? "Preparando..." : "Preparar revisión"}
           </button>
           <span className="text-muted">
-            {files.length ? `${files.length} archivo(s) listo(s)` : "Sin archivos seleccionados"}
+            {files.length ? `${files.length} PDF(s) listo(s)` : "Sin PDFs seleccionados"}
           </span>
           {copied ? <span className="treasury-copied">Copiado: {copied}</span> : null}
         </div>
@@ -329,6 +692,196 @@ export default function TreasuryBankMovementsPage() {
               <strong>{analysis.summary.ocr_statements}</strong>
             </div>
           </div>
+
+          {(movementTemplate || balanceTemplate) && (
+            <div className="card mb-4 treasury-review-card">
+              <div className="treasury-table-head">
+                <div>
+                  <h3>Preparación de Excel</h3>
+                  <p>
+                    {movementTemplate ? `${drafts.length} movimiento(s) nuevo(s)` : "Sin Excel de movimientos"} y{" "}
+                    {balanceTemplate ? `${enabledBalanceCount} saldo(s) listo(s) para actualizar` : "sin Excel de saldos"}.
+                  </p>
+                </div>
+                <div className="treasury-toolbar-actions">
+                  {movementTemplate ? (
+                    <label className="treasury-review-toggle">
+                      <input type="checkbox" checked={reviewOnly} onChange={(event) => setReviewOnly(event.target.checked)} />
+                      Mostrar solo pendientes
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={exportTemplates}
+                    disabled={exporting || (!movementsTemplate && !balancesTemplate)}
+                  >
+                    {exporting ? "Generando ZIP..." : "Descargar Excel actualizados"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="treasury-prep-grid">
+                {movementTemplate ? (
+                  <div className="treasury-prep-card">
+                    <strong>{movementTemplate.filename}</strong>
+                    <span>
+                      {reviewCount} pendiente(s) de revisión. {movementTemplate.skipped_duplicates} movimiento(s) ya
+                      estaban en el archivo.
+                    </span>
+                    {movementTemplate.unmatched_statements.length ? (
+                      <small>
+                        Sin hoja segura: {movementTemplate.unmatched_statements.join(", ")}
+                      </small>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {balanceTemplate ? (
+                  <div className="treasury-prep-card">
+                    <strong>{balanceTemplate.filename}</strong>
+                    <span>{enabledBalanceCount} saldo(s) se actualizarán en {balanceTemplate.sheet_name}.</span>
+                    {balanceTemplate.unmatched_statements.length ? (
+                      <small>
+                        Sin match automático: {balanceTemplate.unmatched_statements.join(", ")}
+                      </small>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              {movementTemplate ? (
+                <div className="treasury-draft-list">
+                  {visibleDrafts.map((draft) => {
+                    const sheet = draft.sheet_name ? sheetLookup.get(draft.sheet_name) || null : null;
+                    return (
+                      <article key={draft.draft_id} className={`treasury-draft-card ${draft.needs_review ? "pending" : "ready"}`}>
+                        <div className="treasury-draft-head">
+                          <div>
+                            <strong>{draft.statement_label}</strong>
+                            <span>
+                              {formatDate(draft.movement.movement_date)} · {formatMoney(Math.abs(draftAmount(draft)))}
+                            </span>
+                          </div>
+                          <div className={`treasury-status ${draft.needs_review ? "pending" : "ready"}`}>
+                            {draft.needs_review ? "Revisar" : "Listo"}
+                          </div>
+                        </div>
+
+                        <div className="treasury-draft-summary">
+                          <p>{draft.movement.description || "Sin descripción"}</p>
+                          {draft.movement.counterparty ? <small>Contraparte: {draft.movement.counterparty}</small> : null}
+                          {draft.matched_history_label ? <small>Sugerencia histórica: {draft.matched_history_label}</small> : null}
+                          {draft.missing_fields.length ? (
+                            <div className="treasury-chip-row">
+                              {draft.missing_fields.map((field) => (
+                                <span key={field} className="treasury-inline-pill">
+                                  Falta: {FIELD_LABELS[field] || field}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="treasury-draft-grid">
+                          <label className="treasury-field">
+                            <span>Hoja destino</span>
+                            <select value={draft.sheet_name || ""} onChange={(event) => handleDraftSheetChange(draft.draft_id, event.target.value)}>
+                              <option value="">Seleccionar hoja</option>
+                              {draft.sheet_options.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          {REVIEW_FIELDS.map((field) => {
+                            const options = fieldOptions(draft, field.key).slice(0, 6);
+                            const datalistId = `${draft.draft_id}-${field.key}`;
+                            return (
+                              <label key={field.key} className={`treasury-field ${field.kind === "textarea" ? "wide" : ""}`}>
+                                <span>{field.label}</span>
+                                {field.kind === "textarea" ? (
+                                  <textarea
+                                    rows={3}
+                                    value={draft.values[field.key] || ""}
+                                    onChange={(event) => handleDraftFieldChange(draft.draft_id, field.key, event.target.value)}
+                                  />
+                                ) : field.kind === "select" ? (
+                                  <select
+                                    value={draft.values[field.key] || ""}
+                                    onChange={(event) => handleDraftFieldChange(draft.draft_id, field.key, event.target.value)}
+                                  >
+                                    <option value="">Seleccionar</option>
+                                    {fieldOptions(draft, field.key).map((option) => (
+                                      <option key={option} value={option}>
+                                        {option}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <>
+                                    <input
+                                      type="text"
+                                      list={datalistId}
+                                      value={draft.values[field.key] || ""}
+                                      onChange={(event) => handleDraftFieldChange(draft.draft_id, field.key, event.target.value)}
+                                    />
+                                    <datalist id={datalistId}>
+                                      {fieldOptions(draft, field.key).map((option) => (
+                                        <option key={option} value={option} />
+                                      ))}
+                                    </datalist>
+                                  </>
+                                )}
+
+                                {options.length ? (
+                                  <div className="treasury-chip-row">
+                                    {options.map((option) => (
+                                      <button
+                                        key={option}
+                                        type="button"
+                                        className="treasury-chip-btn"
+                                        onClick={() => handleDraftFieldChange(draft.draft_id, field.key, option)}
+                                      >
+                                        {option}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              {balanceTemplate ? (
+                <div className="treasury-balance-list">
+                  {balanceUpdates.map((update) => (
+                    <label key={update.id} className="treasury-balance-item">
+                      <input type="checkbox" checked={update.enabled} onChange={() => handleBalanceToggle(update.id)} />
+                      <div>
+                        <strong>
+                          {update.bank || "Banco"} · {update.account_label || "Cuenta"}
+                        </strong>
+                        <span>
+                          {balanceLabel(update)}: {formatMoney(update.current_value)} → {formatMoney(update.new_value)}
+                        </span>
+                        <small>
+                          {update.statement_label} · {update.reason}
+                        </small>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
 
           <div className="card mb-4 treasury-toolbar">
             <div className="treasury-toolbar-grid">

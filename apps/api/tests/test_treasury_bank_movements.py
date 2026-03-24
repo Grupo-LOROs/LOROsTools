@@ -1,13 +1,25 @@
+import tempfile
 import unittest
+from datetime import datetime
+from pathlib import Path
+
+from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from app.routes.treasury_bank_movements import (
+    TreasuryMovement,
+    TreasuryStatement,
     _detect_bank,
     _extract_counterparty,
     _movement_category,
     _parse_bajio,
     _parse_banregio,
     _parse_bbva,
+    _prepare_balance_template,
+    _prepare_movement_template,
     _parse_santander,
+    _render_balance_workbook,
+    _render_movement_workbook,
 )
 
 
@@ -165,6 +177,185 @@ class TreasuryBankMovementsTests(unittest.TestCase):
             "CONSTRUCCIONES LOROS SA DE CV",
         )
         self.assertEqual(_movement_category("IVA por comision", None, 12.0, None), "iva_comision")
+
+    def test_prepare_movement_template_reuses_history_from_matching_sheet(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook_path = Path(tmpdir) / "movimientos.xlsx"
+            self._build_movements_workbook(workbook_path)
+
+            statement = TreasuryStatement(
+                id="bbva-3599",
+                source_file="bbva-3599.pdf",
+                bank="BBVA",
+                ocr_used=False,
+                account_number="0197083599",
+                account_holder="DEESA",
+                closing_balance=935.60,
+                raw_text="IVA COM SERVICIOS BNTC",
+                movements=[
+                    TreasuryMovement(
+                        statement_id="bbva-3599",
+                        source_file="bbva-3599.pdf",
+                        bank="BBVA",
+                        sequence=1,
+                        account_number="0197083599",
+                        movement_date="2026-03-21",
+                        description="IVA COM SERVICIOS BNTC / 00474096",
+                        debit=66.40,
+                        balance=935.60,
+                    )
+                ],
+            )
+
+            prepared = _prepare_movement_template(workbook_path, [statement])
+
+            self.assertEqual(len(prepared["drafts"]), 1)
+            draft = prepared["drafts"][0]
+            self.assertEqual(draft["sheet_name"], "BBVA 3599")
+            self.assertEqual(draft["values"]["reconciliation"], "COMISIONES BANCARIAS")
+            self.assertEqual(draft["values"]["group"], "OF CENTRAL")
+            self.assertEqual(draft["suggestion_source"], "historial")
+
+    def test_render_movement_workbook_writes_on_next_available_row(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook_path = Path(tmpdir) / "movimientos.xlsx"
+            self._build_movements_workbook(workbook_path)
+
+            statement = TreasuryStatement(
+                id="bbva-3599",
+                source_file="bbva-3599.pdf",
+                bank="BBVA",
+                ocr_used=False,
+                account_number="0197083599",
+                account_holder="DEESA",
+                closing_balance=935.60,
+                raw_text="IVA COM SERVICIOS BNTC",
+                movements=[
+                    TreasuryMovement(
+                        statement_id="bbva-3599",
+                        source_file="bbva-3599.pdf",
+                        bank="BBVA",
+                        sequence=1,
+                        account_number="0197083599",
+                        movement_date="2026-03-21",
+                        description="IVA COM SERVICIOS BNTC / 00474096",
+                        debit=66.40,
+                        balance=935.60,
+                    )
+                ],
+            )
+            prepared = _prepare_movement_template(workbook_path, [statement])
+
+            rendered = _render_movement_workbook(workbook_path, prepared["drafts"])
+            output_path = Path(tmpdir) / "movimientos_actualizados.xlsx"
+            output_path.write_bytes(rendered)
+
+            wb = load_workbook(output_path)
+            ws = wb["BBVA 3599"]
+
+            self.assertEqual(ws["A7"].value, "TRANSFERENCIA")
+            self.assertEqual(ws["F7"].value, "BBVA")
+            self.assertEqual(ws["J7"].value, "COMISIONES BANCARIAS")
+            self.assertEqual(ws["K7"].value, "IVA COM SERVICIOS BNTC")
+            self.assertEqual(ws["M7"].value, 66.40)
+            self.assertTrue(str(ws["O7"].value).startswith("="))
+
+    def test_prepare_and_render_balance_template_updates_matching_row(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workbook_path = Path(tmpdir) / "saldos.xlsx"
+            self._build_balance_workbook(workbook_path)
+
+            statement = TreasuryStatement(
+                id="bbva-3599",
+                source_file="bbva-3599.pdf",
+                bank="BBVA",
+                ocr_used=False,
+                account_number="0197083599",
+                account_holder="DEESA",
+                closing_balance=183871.45,
+                raw_text="BBVA",
+            )
+
+            prepared = _prepare_balance_template(workbook_path, [statement])
+
+            self.assertEqual(len(prepared["updates"]), 1)
+            update = prepared["updates"][0]
+            self.assertEqual(update["row_number"], 5)
+            self.assertEqual(update["column_key"], "pesos")
+            self.assertEqual(update["new_value"], 183871.45)
+
+            rendered = _render_balance_workbook(workbook_path, prepared["updates"])
+            output_path = Path(tmpdir) / "saldos_actualizados.xlsx"
+            output_path.write_bytes(rendered)
+
+            wb = load_workbook(output_path, data_only=False)
+            ws = wb.active
+            self.assertEqual(ws["H5"].value, 183871.45)
+
+    def _build_movements_workbook(self, path: Path):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "BBVA 3599"
+        headers = [
+            "TIPO DE MOVIMIENTO",
+            "FECHA",
+            "EMPRESA",
+            "CAJA",
+            "N° CHQ",
+            "A NOMBRE DE",
+            "GRUPO",
+            "UNIDAD DE NEGOCIO",
+            "OBRA",
+            "CONCILIACION",
+            "CONCEPTO DETALLADO",
+            "DEPOSITOS",
+            "RETIROS",
+            "DESGLOSE",
+            "SALDO",
+            "OBSERVACIONES",
+        ]
+        for idx, value in enumerate(headers, start=1):
+            ws.cell(4, idx).value = value
+
+        ws["B5"] = datetime(2026, 3, 20)
+        ws["F5"] = "SALDO INICIAL"
+        ws["O5"] = 1000
+
+        ws["A6"] = "TRANSFERENCIA"
+        ws["B6"] = datetime(2026, 3, 20)
+        ws["C6"] = "DEESA"
+        ws["F6"] = "BBVA"
+        ws["G6"] = "OF CENTRAL"
+        ws["H6"] = "OF CENTRAL"
+        ws["I6"] = "CORPORATIVO"
+        ws["J6"] = "COMISIONES BANCARIAS"
+        ws["K6"] = "IVA COM SERVICIOS BNTC"
+        ws["M6"] = 66.40
+        ws["O6"] = "=O5+L6-M6"
+
+        table = Table(displayName="Tabla15", ref="A4:P10")
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        ws.add_table(table)
+        wb.save(path)
+
+    def _build_balance_workbook(self, path: Path):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "23-03-26"
+        ws["D4"] = "BANCO"
+        ws["E4"] = "DEESA"
+        ws["H4"] = "SALDO B PESOS"
+        ws["I4"] = "SALDO B DOLARES"
+        ws["D5"] = "BBVA"
+        ws["E5"] = "CHEQUES 0197083599"
+        ws["H5"] = 0
+        wb.save(path)
 
 
 if __name__ == "__main__":
