@@ -1,0 +1,30 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app/apps/portal
+
+ARG NEXT_PUBLIC_API_URL=https://api.grupo-loros.com
+ARG NEXT_PUBLIC_BASE_PATH=/tools
+
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
+
+COPY apps/portal/package.json apps/portal/package-lock.json ./
+RUN npm ci
+
+COPY apps/portal ./
+RUN npm run build
+
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+COPY --from=builder /app/apps/portal/.next/standalone ./
+COPY --from=builder /app/apps/portal/.next/static ./.next/static
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

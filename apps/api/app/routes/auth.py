@@ -46,10 +46,14 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     app_permissions = _get_app_permissions(user, db)
 
     # cookie settings
+    same_site = settings.cookie_samesite.lower()
+    if same_site not in {"lax", "strict", "none"}:
+        same_site = "lax"
+
     cookie_params = {
         "httponly": True,
         "secure": settings.cookie_secure,
-        "samesite": "lax",
+        "samesite": same_site,
         "path": "/",
     }
     if settings.cookie_domain:
