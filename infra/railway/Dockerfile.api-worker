@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY apps/api/requirements.txt /tmp/api-requirements.txt
+COPY apps/worker/requirements.txt /tmp/worker-requirements.txt
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r /tmp/api-requirements.txt -r /tmp/worker-requirements.txt
+
+COPY apps/api/app ./apps/api/app
+COPY apps/worker/processors ./apps/worker/processors
+COPY apps/worker/cfe_lib ./apps/worker/cfe_lib
+COPY apps/worker/templates ./apps/worker/templates
+COPY apps/worker/worker.py ./apps/worker/worker.py
+COPY infra/railway/start_api_worker.py ./infra/railway/start_api_worker.py
+
+ENV PYTHONUNBUFFERED=1
+ENV FILES_ROOT=/data/files
+ENV PORT=8000
+
+EXPOSE 8000
+
+CMD ["python", "infra/railway/start_api_worker.py"]

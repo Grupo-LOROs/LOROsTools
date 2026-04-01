@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     jwt_secret: str
     cookie_domain: str = ".tu-dominio.com"
     cookie_secure: bool = True
+    cookie_samesite: str = "lax"
     cors_allowed_origins: str = "https://portal.tu-dominio.com"
     files_root: str = "/data/files"
 
