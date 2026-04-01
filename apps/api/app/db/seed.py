@@ -148,6 +148,22 @@ APPS = [
         },
     },
     {
+        "key": "cuentas_por_pagar_revision_expedientes",
+        "name": "ERA Cuentas por Pagar - Revisión de expedientes",
+        "unit": "era_cuentas_por_pagar",
+        "mode": "interactive",
+        "ui_type": "next",
+        "ui_url": "/tools/era/cuentas-por-pagar/revision-expedientes",
+        "spec": {
+            "inputs": [{"type": "pdf", "multiple": True}],
+            "outputs": [{"type": "data"}],
+            "notes": {
+                "behavior": "Lee expedientes PDF, extrae datos fiscales y operativos, y marca coincidencias rápidas para capturar en Neodata.",
+                "ocr": "Usa OCR cuando el expediente venga escaneado o con páginas sin capa de texto.",
+            },
+        },
+    },
+    {
         "key": "era_proyectos_comisionador_cfe",
         "name": "ERA Proyectos - Comisionador CFE",
         "unit": "era_proyectos",
