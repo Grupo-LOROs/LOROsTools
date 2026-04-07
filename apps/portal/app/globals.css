@@ -79,6 +79,10 @@ a:hover {
   padding: 32px 24px;
 }
 
+.main:has(.treasury-wide) {
+  max-width: 1200px;
+}
+
 /* ── Cards ───────────────────────────────────────────── */
 .card {
   background: var(--surface);
@@ -1761,7 +1765,7 @@ tbody tr:hover {
 
 .treasury-table {
   border-collapse: collapse;
-  min-width: 980px;
+  min-width: 700px;
   width: 100%;
 }
 
@@ -1781,6 +1785,38 @@ tbody tr:hover {
 .treasury-table td small {
   color: var(--text-muted);
   margin-top: 4px;
+}
+
+.treasury-table tr.treasury-clickable {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.treasury-table tr.treasury-clickable:hover {
+  background: var(--hover, rgba(0, 0, 0, 0.03));
+}
+
+.treasury-table tr.treasury-row-copied {
+  background: #dcfce7;
+}
+
+.treasury-copy-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e3a5f;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  z-index: 100;
+  animation: treasury-toast-in 0.2s ease-out;
+}
+
+@keyframes treasury-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 .treasury-pill {

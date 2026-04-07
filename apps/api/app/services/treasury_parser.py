@@ -206,10 +206,20 @@ def _find_label_value(lines: list[str], labels: tuple[str, ...], lookahead: int 
     normalized_labels = tuple(_normalize(label) for label in labels)
     for idx, line in enumerate(lines):
         current = _normalize(line)
+        # Also match lines with extra spaces before the colon (e.g. "Clabe  : 123")
+        current_collapsed = re.sub(r"\s*:\s*", ":", current, count=1)
         for label in normalized_labels:
-            if current.startswith(f"{label}:"):
-                value = line.split(":", 1)[1].strip()
-                return _normalize_spaces(value)
+            if current_collapsed.startswith(f"{label}:"):
+                # Extract value after the colon from the original line
+                colon_pos = line.find(":")
+                value = _normalize_spaces(line[colon_pos + 1 :]) if colon_pos >= 0 else None
+                if value:
+                    return value
+                # Value is on the next line(s) — lookahead
+                for probe in lines[idx + 1 : idx + 1 + lookahead]:
+                    value = _normalize_spaces(probe)
+                    if value:
+                        return value
             if current == label and idx + 1 < len(lines):
                 for probe in lines[idx + 1 : idx + 1 + lookahead]:
                     value = _normalize_spaces(probe)
