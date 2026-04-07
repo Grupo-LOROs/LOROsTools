@@ -7,22 +7,24 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from app.routes.treasury_bank_movements import (
+from app.services.treasury_parser import (
     TreasuryMovement,
     TreasuryStatement,
-    _analysis_payload,
+    analysis_payload as _analysis_payload,
     _detect_bank,
     _extract_counterparty,
     _movement_category,
     _parse_bajio,
     _parse_banregio,
     _parse_bbva,
-    _prepare_balance_template,
-    _prepare_movement_template,
     _parse_santander,
-    _render_balance_workbook,
-    _render_movement_workbook,
-    _statements_from_analysis_json,
+    statements_from_analysis_json as _statements_from_analysis_json,
+)
+from app.services.treasury_template import (
+    prepare_balance_template as _prepare_balance_template,
+    prepare_movement_template as _prepare_movement_template,
+    render_balance_workbook as _render_balance_workbook,
+    render_movement_workbook as _render_movement_workbook,
 )
 
 
