@@ -512,7 +512,7 @@ export default function TreasuryBankMovementsPage() {
   }
 
   return (
-    <>
+    <div className="treasury-wide">
       <p className="text-muted mb-4">
         <Link href="/apps">&larr; Aplicaciones</Link>
       </p>
@@ -1000,6 +1000,6 @@ export default function TreasuryBankMovementsPage() {
           </div>
         </>
       ) : null}
-    </>
+    </div>
   );
 }

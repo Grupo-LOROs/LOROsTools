@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiUpload, apiUploadDownload } from "@/lib/api";
 
@@ -137,8 +137,34 @@ export default function TesoreriaFormatoAsistidoPage() {
   const [balanceTemplate, setBalanceTemplate] = useState<BalanceTemplateResponse | null>(null);
   const [balanceUpdates, setBalanceUpdates] = useState<BalanceUpdate[]>([]);
 
+  const [copiedRow, setCopiedRow] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const enabledCount = useMemo(() => balanceUpdates.filter((item) => item.enabled).length, [balanceUpdates]);
   const suggestAsync = files.length > ASYNC_THRESHOLD;
+
+  const copyRow = useCallback((statement: Statement) => {
+    const parts = [
+      statement.bank,
+      statement.account_number || statement.contract || "",
+      statement.source_file,
+      statement.period_start || statement.period_end
+        ? `${statement.period_start || "?"} a ${statement.period_end || "?"}`
+        : statement.period_label || statement.statement_date || "",
+      statement.closing_balance != null ? statement.closing_balance.toString() : "",
+    ];
+    const text = parts.join("\t");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedRow(statement.id);
+      setToast(`Copiado: ${statement.bank} · ${statement.account_number || statement.source_file}`);
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => {
+        setToast(null);
+        setCopiedRow(null);
+      }, 1800);
+    });
+  }, []);
 
   function clearResults() {
     setAnalysis(null);
@@ -261,7 +287,7 @@ export default function TesoreriaFormatoAsistidoPage() {
   }
 
   return (
-    <>
+    <div className="treasury-wide">
       <p className="text-muted mb-4">
         <Link href="/apps">&larr; Aplicaciones</Link>
       </p>
@@ -546,7 +572,12 @@ export default function TesoreriaFormatoAsistidoPage() {
                 </thead>
                 <tbody>
                   {analysis.statements.map((statement) => (
-                    <tr key={statement.id}>
+                    <tr
+                      key={statement.id}
+                      className={`treasury-clickable${copiedRow === statement.id ? " treasury-row-copied" : ""}`}
+                      title="Clic para copiar esta fila"
+                      onClick={() => copyRow(statement)}
+                    >
                       <td>{statement.bank}</td>
                       <td>{statementLabel(statement)}</td>
                       <td>{statement.source_file}</td>
@@ -564,6 +595,8 @@ export default function TesoreriaFormatoAsistidoPage() {
           </div>
         </>
       ) : null}
-    </>
+
+      {toast ? <div className="treasury-copy-toast">{toast}</div> : null}
+    </div>
   );
 }
