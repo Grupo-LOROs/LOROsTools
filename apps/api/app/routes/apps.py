@@ -210,7 +210,9 @@ async def create_job(
 
     ensure_app_access(user, app.key, db)
 
-    if app.mode != "batch":
+    # Some interactive apps also support async job submission
+    _INTERACTIVE_WITH_JOBS = {"tesoreria_automatizacion_saldos"}
+    if app.mode != "batch" and app.key not in _INTERACTIVE_WITH_JOBS:
         raise HTTPException(
             status_code=400,
             detail="This app is interactive; it should be used from the portal UI.",
