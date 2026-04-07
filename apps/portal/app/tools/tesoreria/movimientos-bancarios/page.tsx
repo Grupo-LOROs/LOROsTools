@@ -898,23 +898,28 @@ export default function TreasuryBankMovementsPage() {
                   </div>
 
                   <div className="treasury-meta-grid">
-                    <div>
+                    <div className="treasury-clickable-card" onClick={() => handleCopy("Cuenta", selectedStatement.account_number || "")}>
                       <span>Cuenta</span>
                       <strong>{selectedStatement.account_number || "No detectada"}</strong>
                     </div>
-                    <div>
+                    <div className="treasury-clickable-card" onClick={() => handleCopy("CLABE", selectedStatement.clabe || "")}>
                       <span>CLABE</span>
                       <strong>{selectedStatement.clabe || "No detectada"}</strong>
                     </div>
-                    <div>
+                    <div className="treasury-clickable-card" onClick={() => handleCopy("Contrato", selectedStatement.contract || "")}>
                       <span>Contrato</span>
                       <strong>{selectedStatement.contract || "No detectado"}</strong>
                     </div>
-                    <div>
+                    <div className="treasury-clickable-card" onClick={() => handleCopy("Divisa", selectedStatement.currency || "")}>
                       <span>Divisa</span>
                       <strong>{selectedStatement.currency || "No detectada"}</strong>
                     </div>
-                    <div>
+                    <div className="treasury-clickable-card" onClick={() => {
+                      const period = selectedStatement.period_start || selectedStatement.period_end
+                        ? `${selectedStatement.period_start || "?"} a ${selectedStatement.period_end || "?"}`
+                        : selectedStatement.period_label || "";
+                      handleCopy("Periodo", period);
+                    }}>
                       <span>Periodo</span>
                       <strong>
                         {selectedStatement.period_start || selectedStatement.period_end
@@ -922,7 +927,7 @@ export default function TreasuryBankMovementsPage() {
                           : selectedStatement.period_label || "No detectado"}
                       </strong>
                     </div>
-                    <div>
+                    <div className="treasury-clickable-card" onClick={() => handleCopy("Saldo final", selectedStatement.closing_balance?.toString() || "")}>
                       <span>Saldo final</span>
                       <strong>{formatMoney(selectedStatement.closing_balance)}</strong>
                     </div>
@@ -983,7 +988,7 @@ export default function TreasuryBankMovementsPage() {
                         <span className={`treasury-pill ${item.movement_type || "informativo"}`}>{movementBadge(item)}</span>
                       </td>
                       <td>{item.category || "—"}</td>
-                      <td>
+                      <td className="wrap-cell">
                         <strong>{item.description || "Sin descripción"}</strong>
                         {item.concept ? <small>{item.concept}</small> : null}
                       </td>
