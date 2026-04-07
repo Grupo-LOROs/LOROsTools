@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiUpload, apiUploadDownload } from "@/lib/api";
+
+const APP_KEY = "tesoreria_automatizacion_saldos";
+const ASYNC_THRESHOLD = 3;
 
 type Summary = {
   statements: number;
@@ -69,6 +73,12 @@ type PreparedBalancesResponse = {
   balances_template: BalanceTemplateResponse | null;
 };
 
+type JobResult = {
+  id: string;
+  app_key: string;
+  status: string;
+};
+
 function formatDate(value: string | null) {
   if (!value) return "Sin fecha";
   return new Date(`${value}T12:00:00`).toLocaleDateString("es-MX", {
@@ -113,18 +123,22 @@ function balanceLabel(update: BalanceUpdate) {
 }
 
 export default function TesoreriaFormatoAsistidoPage() {
+  const router = useRouter();
+
   const [files, setFiles] = useState<File[]>([]);
   const [balanceTemplateFile, setBalanceTemplateFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [submittingJob, setSubmittingJob] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [balanceTemplate, setBalanceTemplate] = useState<BalanceTemplateResponse | null>(null);
   const [balanceUpdates, setBalanceUpdates] = useState<BalanceUpdate[]>([]);
 
   const enabledCount = useMemo(() => balanceUpdates.filter((item) => item.enabled).length, [balanceUpdates]);
+  const suggestAsync = files.length > ASYNC_THRESHOLD;
 
   function clearResults() {
     setAnalysis(null);
@@ -212,6 +226,31 @@ export default function TesoreriaFormatoAsistidoPage() {
       setError(err?.message || "No se pudo generar el Excel de saldos.");
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function submitAsJob() {
+    if (!files.length) {
+      setError("Debes subir al menos un PDF.");
+      return;
+    }
+    if (!balanceTemplateFile) {
+      setError("Sube el Excel de saldos diarios antes de enviar como trabajo.");
+      return;
+    }
+
+    setSubmittingJob(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("inputs", f));
+      fd.append("template", balanceTemplateFile);
+      const job = await apiUpload<JobResult>(`/apps/${APP_KEY}/jobs`, fd);
+      router.push(`/jobs/${job.id}`);
+    } catch (err: any) {
+      setError(err?.message || "No se pudo crear el trabajo en background.");
+    } finally {
+      setSubmittingJob(false);
     }
   }
 
@@ -321,7 +360,56 @@ export default function TesoreriaFormatoAsistidoPage() {
             {files.length ? `${files.length} PDF(s) listo(s)` : "Sin PDFs seleccionados"}
           </span>
         </div>
+
+        {suggestAsync && balanceTemplateFile ? (
+          <div className="treasury-async-hint">
+            <p>
+              Tienes <strong>{files.length} PDFs</strong>. Puedes procesar en background para no esperar aquí.
+            </p>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={submitAsJob}
+              disabled={submittingJob}
+            >
+              {submittingJob ? "Enviando..." : "Procesar en background"}
+            </button>
+          </div>
+        ) : null}
       </div>
+
+      {/* Template upload for async mode: show before analysis if many PDFs */}
+      {suggestAsync && !analysis ? (
+        <div className="card mb-4 treasury-review-card">
+          <div className="treasury-table-head">
+            <div>
+              <h3>Excel de saldos diarios</h3>
+              <p>Sube la plantilla para poder enviar como trabajo en background, o analiza primero los PDFs para el flujo normal.</p>
+            </div>
+          </div>
+          <div className="treasury-upload-grid">
+            <label className="treasury-file-field">
+              <span>Excel de saldos diarios</span>
+              <input
+                type="file"
+                accept=".xlsx,.xlsm"
+                onChange={(event) => {
+                  setBalanceTemplate(null);
+                  setBalanceUpdates([]);
+                  const next = event.target.files?.[0] || null;
+                  setBalanceTemplateFile(next);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <small>
+                {balanceTemplateFile
+                  ? `Seleccionado: ${balanceTemplateFile.name}`
+                  : "Sube el archivo que contiene los saldos por banco y cuenta."}
+              </small>
+            </label>
+          </div>
+        </div>
+      ) : null}
 
       {analysis ? (
         <>
