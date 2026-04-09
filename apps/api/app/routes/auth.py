@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -81,7 +83,12 @@ def logout():
     from fastapi.responses import JSONResponse
 
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(key="access_token", path="/")
+
+    delete_params: dict[str, Any] = {"path": "/"}
+    if settings.cookie_domain:
+        delete_params["domain"] = settings.cookie_domain
+
+    resp.delete_cookie(key="access_token", **delete_params)
     return resp
 
 
