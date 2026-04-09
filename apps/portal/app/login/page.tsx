@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,7 +19,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(username, password);
-      router.push("/apps");
+      const next = searchParams.get("next");
+      router.push(next && next.startsWith("/") ? next : "/apps");
     } catch (err: any) {
       setError(err.message || "No se pudo iniciar sesión");
     } finally {

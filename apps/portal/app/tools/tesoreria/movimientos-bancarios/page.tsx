@@ -964,17 +964,17 @@ export default function TreasuryBankMovementsPage() {
             <div className="table-wrap">
               <table className="treasury-table">
                 <colgroup>
-                  <col style={{ width: "7%" }} />   {/* Fecha */}
-                  <col style={{ width: "6%" }} />   {/* Banco */}
-                  <col style={{ width: "8%" }} />   {/* Cuenta */}
-                  <col style={{ width: "7%" }} />   {/* Tipo */}
-                  <col style={{ width: "8%" }} />   {/* Clasificación */}
-                  <col style={{ width: "28%" }} />  {/* Descripción */}
-                  <col style={{ width: "10%" }} />  {/* Referencia */}
-                  <col style={{ width: "10%" }} />  {/* Contraparte */}
-                  <col style={{ width: "6%" }} />   {/* Cargo */}
-                  <col style={{ width: "6%" }} />   {/* Abono */}
-                  <col style={{ width: "7%" }} />   {/* Saldo */}
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "28%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "6%" }} />
+                  <col style={{ width: "7%" }} />
                 </colgroup>
                 <thead>
                   <tr>
