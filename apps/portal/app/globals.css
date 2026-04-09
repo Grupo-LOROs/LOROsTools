@@ -1775,23 +1775,26 @@ tbody tr:hover {
 
 .treasury-table {
   border-collapse: collapse;
-  min-width: 700px;
+  table-layout: fixed;
   width: 100%;
 }
 
 .treasury-table th,
 .treasury-table td {
   border-bottom: 1px solid var(--border);
-  padding: 8px 6px;
+  padding: 6px 5px;
   text-align: left;
   vertical-align: top;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .treasury-table td.wrap-cell {
   white-space: normal;
-  max-width: 260px;
+  overflow: visible;
+  text-overflow: unset;
   word-break: break-word;
 }
 

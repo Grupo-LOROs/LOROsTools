@@ -33,11 +33,9 @@ services:
       context: ../apps/portal
       args:
         NEXT_PUBLIC_API_URL: https://api.grupo-loros.com
-        NEXT_PUBLIC_BASE_PATH: /tools
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: https://api.grupo-loros.com
-      NEXT_PUBLIC_BASE_PATH: /tools
       PORT: 3000
     depends_on:
       api:
