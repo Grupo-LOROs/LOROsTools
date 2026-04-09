@@ -518,6 +518,29 @@ def _parse_bbva(text: str, source_file: str, ocr_used: bool) -> TreasuryStatemen
         statement.total_debits = round(sum(debits), 2)
     if statement.movements:
         statement.closing_balance = statement.movements[-1].balance
+
+    # Derive period from movement dates when period_label is not a date range
+    if statement.movements and not statement.period_start:
+        dates = sorted(d for m in statement.movements if (d := m.movement_date))
+        if dates:
+            statement.period_start = dates[0]
+            statement.period_end = dates[-1]
+
+    # OCR: contract number may appear fragmented far from "No. Contrato" label
+    if not statement.contract:
+        contract_match = re.search(r"(?:No\.?\s*Contrato|Contrato)\s*[:\s]*(\d{5,})", text, re.IGNORECASE)
+        if contract_match:
+            statement.contract = contract_match.group(1)
+
+    # OCR: account holder may appear fragmented after header
+    if not statement.account_holder:
+        holder_match = re.search(
+            r"((?:CONSTRUCCIONES|LORENTO|INMOBILIARIA|GRUPO)[A-Z\s]+(?:SA\s+DE\s+CV|S\.?A\.?\s+DE\s+C\.?V\.?))",
+            text, re.IGNORECASE,
+        )
+        if holder_match:
+            statement.account_holder = _normalize_spaces(holder_match.group(1))
+
     return statement
 
 
@@ -818,6 +841,18 @@ def _parse_monex(text: str, source_file: str, ocr_used: bool) -> TreasuryStateme
         currencies = sorted({item.currency for item in statement.movements if item.currency})
         if len(currencies) > 1:
             statement.currency = "MULTI"
+
+    # Derive period from movement dates when regex didn't match
+    if statement.movements and not statement.period_start:
+        dates = sorted(d for m in statement.movements if (d := m.movement_date))
+        if dates:
+            statement.period_start = dates[0]
+            statement.period_end = dates[-1]
+
+    # Monex: try to find account number from "Cuenta" label
+    if not statement.account_number:
+        statement.account_number = _find_label_value(lines, ("Cuenta",))
+
     return statement
 
 

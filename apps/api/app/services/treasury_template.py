@@ -803,24 +803,65 @@ def _write_draft_row(ws, profile: dict[str, Any], row_idx: int, draft: dict[str,
 
 
 def render_movement_workbook(template_path: Path, drafts: list[dict[str, Any]]) -> bytes:
-    """Apply movement drafts to the template and return the workbook bytes."""
-    workbook = load_workbook(template_path)
+    """Apply movement drafts to the template.
+
+    Creates a new sheet for each day that has movements, copying structure
+    from the matching template sheet.
+    """
+    workbook = load_workbook(template_path, keep_links=True)
+    # Remove table definitions to prevent openpyxl corruption
+    for sheet in workbook.worksheets:
+        if hasattr(sheet, "_tables"):
+            sheet._tables = []
     profiles = {ws.title: _read_sheet_profile(ws) for ws in workbook.worksheets}
 
-    grouped: dict[str, list[dict[str, Any]]] = {}
+    # Group drafts by sheet_name, then by date
+    by_sheet: dict[str, list[dict[str, Any]]] = {}
     for draft in drafts:
         if not draft.get("sheet_name"):
             continue
-        grouped.setdefault(draft["sheet_name"], []).append(draft)
+        by_sheet.setdefault(draft["sheet_name"], []).append(draft)
 
-    for sheet_name, sheet_drafts in grouped.items():
+    for sheet_name, sheet_drafts in by_sheet.items():
         if sheet_name not in profiles:
             continue
-        ws = workbook[sheet_name]
-        profile = profiles[sheet_name]
-        for draft in sorted(sheet_drafts, key=lambda item: (item["values"].get("date") or "", item["draft_id"])):
-            row_idx = _ensure_target_row(ws, profile)
-            _write_draft_row(ws, profile, row_idx, draft)
+        source_profile = profiles[sheet_name]
+
+        # Group this sheet's drafts by date
+        by_date: dict[str, list[dict[str, Any]]] = {}
+        for draft in sorted(sheet_drafts, key=lambda d: (d["values"].get("date") or "", d["draft_id"])):
+            date_key = draft["values"].get("date") or "sin-fecha"
+            by_date.setdefault(date_key, []).append(draft)
+
+        for date_key, day_drafts in by_date.items():
+            # Build a sheet name like "BBVA Pesos 2026-01-31" or use the original if only one day
+            if len(by_date) == 1:
+                target_sheet_name = sheet_name
+            else:
+                # Format date for sheet name (max 31 chars for Excel)
+                date_suffix = date_key[5:] if date_key.startswith("20") else date_key  # "01-31"
+                target_sheet_name = f"{sheet_name} {date_suffix}"[:31]
+
+            if target_sheet_name == sheet_name:
+                # Write directly to the existing sheet
+                ws = workbook[sheet_name]
+                profile = source_profile
+            else:
+                # Clone the template sheet for this day
+                source_ws = workbook[sheet_name]
+                ws = workbook.copy_worksheet(source_ws)
+                ws.title = target_sheet_name
+                profile = _read_sheet_profile(ws)
+                # Clear existing data rows (keep only header)
+                for row_idx in range(profile["data_start_row"], profile["table_end_row"] + 1):
+                    for col_idx in range(profile["table_start_col"], profile["table_end_col"] + 1):
+                        cell = ws.cell(row_idx, col_idx)
+                        if not (isinstance(cell.value, str) and cell.value.startswith("=")):
+                            cell.value = None
+
+            for draft in day_drafts:
+                row_idx = _ensure_target_row(ws, profile)
+                _write_draft_row(ws, profile, row_idx, draft)
 
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -829,7 +870,11 @@ def render_movement_workbook(template_path: Path, drafts: list[dict[str, Any]]) 
 
 def render_balance_workbook(template_path: Path, updates: list[dict[str, Any]]) -> bytes:
     """Apply balance updates to the template and return the workbook bytes."""
-    workbook = load_workbook(template_path)
+    workbook = load_workbook(template_path, keep_links=True)
+    # Remove any table definitions to prevent openpyxl from corrupting them on save
+    for sheet in workbook.worksheets:
+        if hasattr(sheet, "_tables"):
+            sheet._tables = []
     ws = workbook[workbook.sheetnames[0]]
     for update in updates:
         if not update.get("enabled", True):
