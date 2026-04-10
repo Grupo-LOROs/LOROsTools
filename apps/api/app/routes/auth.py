@@ -1,12 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import create_access_token, hash_password, verify_password
-from app.db.models import User, UserAppPermission
+from app.db.models import AuditEvent, User, UserAppPermission
 from app.db.session import get_db
 from app.deps import require_user
 
@@ -39,10 +39,15 @@ def _get_app_permissions(user: User, db: Session) -> list[str]:
 
 
 @router.post("/login")
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+    # Track login event
+    ip = request.client.host if request.client else None
+    db.add(AuditEvent(event_type="login", username=user.username, ip_address=ip))
+    db.commit()
 
     token = create_access_token(sub=user.username)
     app_permissions = _get_app_permissions(user, db)

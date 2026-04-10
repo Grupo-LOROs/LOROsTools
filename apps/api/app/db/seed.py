@@ -2,7 +2,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
-from app.db.models import AppDefinition, User, UserAppPermission
+from app.db.models import Announcement, AppDefinition, User, UserAppPermission
 
 
 DEFAULT_ADMIN_USER = "admin"
@@ -184,6 +184,31 @@ APPS = [
 ]
 
 
+ANNOUNCEMENTS = [
+    {
+        "slug": "bienvenida-plataforma",
+        "title": "Bienvenido a LOROs Tools",
+        "body": "Plataforma de herramientas de automatización. Selecciona una aplicación para comenzar.",
+        "level": "info",
+        "app_keys": [],  # global
+    },
+    {
+        "slug": "mejora-tesoreria-movimientos",
+        "title": "Mejora en Captura de Movimientos Bancarios",
+        "body": "Se mejoró la detección de bancos y el parseo de PDFs para estados de cuenta de BBVA, Santander, BanBajío y Monex.",
+        "level": "success",
+        "app_keys": ["tesoreria_automatizacion_saldos", "tesoreria_generacion_conciliacion"],
+    },
+    {
+        "slug": "mejora-importaciones-oc",
+        "title": "Actualización en Cartas Complementarias",
+        "body": "Se actualizó el generador de cartas complementarias desde órdenes de compra con mejor manejo de formatos.",
+        "level": "info",
+        "app_keys": ["era_importaciones_generador_oc"],
+    },
+]
+
+
 def seed(db: Session) -> None:
     """Idempotent seed."""
 
@@ -222,6 +247,28 @@ def seed(db: Session) -> None:
             existing.ui_type = a.get("ui_type")
             existing.ui_url = a.get("ui_url")
             existing.spec = a.get("spec", existing.spec)
+
+    db.commit()
+
+    # announcements
+    for ann in ANNOUNCEMENTS:
+        existing = db.query(Announcement).filter(Announcement.slug == ann["slug"]).first()
+        if not existing:
+            db.add(
+                Announcement(
+                    slug=ann["slug"],
+                    title=ann["title"],
+                    body=ann["body"],
+                    level=ann.get("level", "info"),
+                    app_keys=ann.get("app_keys", []),
+                    active=True,
+                )
+            )
+        else:
+            existing.title = ann["title"]
+            existing.body = ann["body"]
+            existing.level = ann.get("level", "info")
+            existing.app_keys = ann.get("app_keys", [])
 
     db.commit()
 

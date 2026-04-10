@@ -20,7 +20,7 @@ export function NavBar() {
         <Link href="/apps">Apps</Link>
         <Link href="/jobs">Mis trabajos</Link>
         {ready && user && <Link href="/account/password">Mi contraseña</Link>}
-        {ready && user?.is_admin && <Link href="/admin/users">Usuarios</Link>}
+        {ready && user?.is_admin && <Link href="/admin">Admin</Link>}
         {ready && user ? (
           <>
             <span className="text-muted" style={{ fontSize: "0.85rem" }}>{user.username}</span>

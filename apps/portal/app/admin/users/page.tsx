@@ -200,7 +200,6 @@ export default function AdminUsersPage() {
 
   return (
     <>
-      <h1 style={{ fontSize: "1.3rem", marginBottom: 12 }}>Administración de usuarios</h1>
       <p className="text-muted mb-4">Crea usuarios y asigna permisos por aplicación.</p>
 
       {error && <div className="error-msg">{error}</div>}

@@ -116,6 +116,31 @@ class JobFile(Base):
     job: Mapped[Job] = relationship(back_populates="files")
 
 
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(30), index=True, nullable=False)  # login | app_open
+    username: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    app_key: Mapped[str | None] = mapped_column(String(64), nullable=True)  # only for app_open
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class Announcement(Base):
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    level: Mapped[str] = mapped_column(String(20), default="info", nullable=False)  # info | warning | success
+    app_keys: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)  # [] = global
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class CatalogQuoteFolioCounter(Base):
     __tablename__ = "catalog_quote_folio_counters"
 

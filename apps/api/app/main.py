@@ -18,6 +18,8 @@ from app.routes.jobs import router as jobs_router
 from app.routes.gi_tools import router as gi_tools_router
 from app.routes.treasury_bank_movements import router as treasury_bank_movements_router
 from app.routes import job_files
+from app.routes.admin import router as admin_router
+from app.routes.announcements import router as announcements_router
 from app.routes.users import router as users_router
 
 
@@ -69,6 +71,8 @@ def health():
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(users_router, prefix="/users", tags=["users"])
 app.include_router(apps_router, prefix="/apps", tags=["apps"])
+app.include_router(admin_router, prefix="/admin", tags=["admin"])
+app.include_router(announcements_router, prefix="/announcements", tags=["announcements"])
 app.include_router(catalog_quote_router)
 app.include_router(gi_tools_router)
 app.include_router(compras_tracking_router)

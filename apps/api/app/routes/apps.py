@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import AppDefinition, Job, JobFile, User, UserAppPermission
+from app.db.models import AppDefinition, AuditEvent, Job, JobFile, User, UserAppPermission
 from app.db.session import get_db
 from app.deps import ensure_app_access, require_user
 
@@ -193,6 +193,24 @@ def get_app(key: str, db: Session = Depends(get_db), user: User = Depends(requir
         "ui": {"type": app.ui_type, "url": app.ui_url},
         "spec": app.spec,
     }
+
+
+@router.post("/{key}/track-open")
+def track_app_open(
+    key: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_user),
+):
+    app = db.get(AppDefinition, key)
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    ensure_app_access(user, app.key, db)
+
+    db.add(AuditEvent(event_type="app_open", username=user.username, app_key=app.key))
+    db.commit()
+
+    return {"ok": True}
 
 
 @router.post("/{key}/jobs")

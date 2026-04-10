@@ -14,6 +14,15 @@ type AppRow = {
   spec: Record<string, any>;
 };
 
+type AnnouncementRow = {
+  id: number;
+  title: string;
+  body: string;
+  level: string;
+  app_keys: string[];
+  created_at: string;
+};
+
 const UNIT_LABELS: Record<string, string> = {
   gi: "GI",
   era_importaciones: "ERA Importaciones",
@@ -42,14 +51,22 @@ function resolveAppHref(app: AppRow): string {
   return app.mode === "batch" ? `/apps/${app.key}/new-job` : `/apps/${app.key}/interactive`;
 }
 
+function trackAppOpen(appKey: string) {
+  apiFetch(`/apps/${appKey}/track-open`, { method: "POST" }).catch(() => {});
+}
+
 export default function AppsPage() {
   const [apps, setApps] = useState<AppRow[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<AppRow[]>("/apps")
       .then(setApps)
       .catch((e) => setError(e.message));
+    apiFetch<AnnouncementRow[]>("/announcements")
+      .then(setAnnouncements)
+      .catch(() => {});
   }, []);
 
   const grouped = apps.reduce<Record<string, AppRow[]>>((acc, a) => {
@@ -64,6 +81,22 @@ export default function AppsPage() {
       </div>
 
       {error && <div className="error-msg">{error}</div>}
+
+      {announcements.length > 0 && (
+        <div className="announcements-section">
+          {announcements.map((a) => (
+            <div key={a.id} className={`announcement announcement-${a.level}`}>
+              <div className="announcement-title">
+                {a.title}
+                <span className={`announcement-badge announcement-badge-${a.level}`}>
+                  {a.level}
+                </span>
+              </div>
+              <div className="announcement-body">{a.body}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {Object.entries(grouped).map(([unit, items]) => (
         <div key={unit} className="mb-4">
@@ -111,6 +144,7 @@ export default function AppsPage() {
                               rel="noopener noreferrer"
                               className="btn btn-primary btn-sm"
                               style={{ textDecoration: "none" }}
+                              onClick={() => trackAppOpen(a.key)}
                             >
                               Nuevo trabajo
                             </a>
@@ -119,6 +153,7 @@ export default function AppsPage() {
                               href={appHref}
                               className="btn btn-primary btn-sm"
                               style={{ textDecoration: "none" }}
+                              onClick={() => trackAppOpen(a.key)}
                             >
                               Nuevo trabajo
                             </Link>
@@ -131,6 +166,7 @@ export default function AppsPage() {
                               rel="noopener noreferrer"
                               className="btn btn-primary btn-sm"
                               style={{ textDecoration: "none" }}
+                              onClick={() => trackAppOpen(a.key)}
                             >
                               Abrir
                             </a>
@@ -139,6 +175,7 @@ export default function AppsPage() {
                               href={appHref}
                               className="btn btn-primary btn-sm"
                               style={{ textDecoration: "none" }}
+                              onClick={() => trackAppOpen(a.key)}
                             >
                               Abrir
                             </Link>
