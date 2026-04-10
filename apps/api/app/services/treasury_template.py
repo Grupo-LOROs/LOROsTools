@@ -640,9 +640,14 @@ def prepare_movement_template(template_path: Path, statements: list[TreasuryStat
 
 
 def prepare_balance_template(template_path: Path, statements: list[TreasuryStatement]) -> dict[str, Any]:
-    """Analyze a balance template and match statements to rows."""
+    """Analyze a balance template and match statements to rows.
+
+    Uses the LAST sheet in the workbook (the most recent day) as reference
+    to find bank/account rows and match them against parsed statements.
+    """
     workbook = load_workbook(template_path)
-    ws = workbook[workbook.sheetnames[0]]
+    # Use the last sheet (most recent) as the reference for matching
+    ws = workbook.worksheets[-1]
 
     updates: list[dict[str, Any]] = []
     matched_statement_ids: set[str] = set()
@@ -802,20 +807,40 @@ def _write_draft_row(ws, profile: dict[str, Any], row_idx: int, draft: dict[str,
             cell.value = values[field]
 
 
+def _draft_signature(draft: dict[str, Any]) -> str:
+    """Build a deduplication signature from a draft's values."""
+    values = draft.get("values", {})
+    movement = draft.get("movement", {})
+    date = values.get("date") or ""
+    deposits = values.get("deposits")
+    withdrawals = values.get("withdrawals")
+    amount = (float(deposits or 0)) - (float(withdrawals or 0))
+    detail = values.get("detailed_concept") or movement.get("description") or ""
+    return _source_movement_signature(
+        movement_date=date,
+        amount=amount,
+        detail=detail,
+    )
+
+
 def render_movement_workbook(template_path: Path, drafts: list[dict[str, Any]]) -> bytes:
     """Apply movement drafts to the template.
 
-    Creates a new sheet for each day that has movements, copying structure
-    from the matching template sheet.
+    Matches each draft to its target sheet, skips duplicates that already
+    exist in the sheet, and appends new movements preserving the existing
+    structure and data.
     """
     workbook = load_workbook(template_path, keep_links=True)
     # Remove table definitions to prevent openpyxl corruption
     for sheet in workbook.worksheets:
         if hasattr(sheet, "_tables"):
-            sheet._tables = []
+            if hasattr(sheet, '_tables') and hasattr(sheet._tables, 'clear'):
+                sheet._tables.clear()
+
+    # Read profiles (including existing signatures for dedup) for all sheets
     profiles = {ws.title: _read_sheet_profile(ws) for ws in workbook.worksheets}
 
-    # Group drafts by sheet_name, then by date
+    # Group drafts by sheet_name
     by_sheet: dict[str, list[dict[str, Any]]] = {}
     for draft in drafts:
         if not draft.get("sheet_name"):
@@ -825,57 +850,77 @@ def render_movement_workbook(template_path: Path, drafts: list[dict[str, Any]]) 
     for sheet_name, sheet_drafts in by_sheet.items():
         if sheet_name not in profiles:
             continue
-        source_profile = profiles[sheet_name]
+        ws = workbook[sheet_name]
+        profile = profiles[sheet_name]
 
-        # Group this sheet's drafts by date
-        by_date: dict[str, list[dict[str, Any]]] = {}
-        for draft in sorted(sheet_drafts, key=lambda d: (d["values"].get("date") or "", d["draft_id"])):
-            date_key = draft["values"].get("date") or "sin-fecha"
-            by_date.setdefault(date_key, []).append(draft)
+        # Sort drafts by date then id for consistent ordering
+        sorted_drafts = sorted(
+            sheet_drafts,
+            key=lambda d: (d["values"].get("date") or "", d.get("draft_id", "")),
+        )
 
-        for date_key, day_drafts in by_date.items():
-            # Build a sheet name like "BBVA Pesos 2026-01-31" or use the original if only one day
-            if len(by_date) == 1:
-                target_sheet_name = sheet_name
-            else:
-                # Format date for sheet name (max 31 chars for Excel)
-                date_suffix = date_key[5:] if date_key.startswith("20") else date_key  # "01-31"
-                target_sheet_name = f"{sheet_name} {date_suffix}"[:31]
+        for draft in sorted_drafts:
+            # Double-check deduplication against existing data in the sheet
+            sig = _draft_signature(draft)
+            if sig in profile["existing_signatures"]:
+                continue
 
-            if target_sheet_name == sheet_name:
-                # Write directly to the existing sheet
-                ws = workbook[sheet_name]
-                profile = source_profile
-            else:
-                # Clone the template sheet for this day
-                source_ws = workbook[sheet_name]
-                ws = workbook.copy_worksheet(source_ws)
-                ws.title = target_sheet_name
-                profile = _read_sheet_profile(ws)
-                # Clear existing data rows (keep only header)
-                for row_idx in range(profile["data_start_row"], profile["table_end_row"] + 1):
-                    for col_idx in range(profile["table_start_col"], profile["table_end_col"] + 1):
-                        cell = ws.cell(row_idx, col_idx)
-                        if not (isinstance(cell.value, str) and cell.value.startswith("=")):
-                            cell.value = None
-
-            for draft in day_drafts:
-                row_idx = _ensure_target_row(ws, profile)
-                _write_draft_row(ws, profile, row_idx, draft)
+            row_idx = _ensure_target_row(ws, profile)
+            _write_draft_row(ws, profile, row_idx, draft)
+            # Track this signature so subsequent drafts with the same
+            # data within this render pass are also deduplicated
+            profile["existing_signatures"].add(sig)
 
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
 
 
-def render_balance_workbook(template_path: Path, updates: list[dict[str, Any]]) -> bytes:
-    """Apply balance updates to the template and return the workbook bytes."""
+def _today_sheet_name() -> str:
+    """Return today's date formatted for use as a sheet name, e.g. '10-Abr'."""
+    months_es = {
+        1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
+        7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic",
+    }
+    now = datetime.now()
+    return f"{now.day}-{months_es[now.month]}"
+
+
+def _copy_sheet_full(workbook, source_ws, new_title: str):
+    """Copy a worksheet preserving all cell values, styles, merged cells and dimensions."""
+    new_ws = workbook.copy_worksheet(source_ws)
+    new_ws.title = new_title
+    return new_ws
+
+
+def render_balance_workbook(template_path: Path, updates: list[dict[str, Any]], target_date: str | None = None) -> bytes:
+    """Create a new balance sheet (or update existing) with balance values from PDFs.
+
+    Workflow:
+    1. Find the last sheet in the workbook (the most recent day).
+    2. If a sheet named after today already exists, use it; otherwise
+       copy the last sheet into a new one named after today.
+    3. Apply the balance updates to the target sheet.
+    """
     workbook = load_workbook(template_path, keep_links=True)
     # Remove any table definitions to prevent openpyxl from corrupting them on save
     for sheet in workbook.worksheets:
         if hasattr(sheet, "_tables"):
-            sheet._tables = []
-    ws = workbook[workbook.sheetnames[0]]
+            if hasattr(sheet, '_tables') and hasattr(sheet._tables, 'clear'):
+                sheet._tables.clear()
+
+    today_name = target_date or _today_sheet_name()
+    existing_names = {ws.title for ws in workbook.worksheets}
+
+    if today_name in existing_names:
+        # Sheet for today already exists — just update balances
+        ws = workbook[today_name]
+    else:
+        # Copy the last sheet (most recent day) to create today's sheet
+        source_ws = workbook.worksheets[-1]
+        ws = _copy_sheet_full(workbook, source_ws, today_name)
+
+    # Apply balance updates
     for update in updates:
         if not update.get("enabled", True):
             continue

@@ -253,7 +253,12 @@ class TestTreasuryTemplate(unittest.TestCase):
             out_path = Path(tmpdir) / "out.xlsx"
             out_path.write_bytes(result_bytes)
             wb2 = load_workbook(out_path)
-            self.assertEqual(wb2.active["H5"].value, 12345.67)
+            # render_balance_workbook creates a new sheet (copy of last);
+            # the updated values are in the new (last) sheet.
+            new_ws = wb2.worksheets[-1]
+            self.assertEqual(new_ws["H5"].value, 12345.67)
+            # Original sheet should still have old value
+            self.assertEqual(wb2.worksheets[0]["H5"].value, 0)
 
     def test_prepare_movement_template(self):
         with tempfile.TemporaryDirectory() as tmpdir:
