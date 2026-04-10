@@ -1,13 +1,12 @@
-﻿const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
-
-function authHeaders(): Record<string, string> {
+﻿function authHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
   const token = sessionStorage.getItem("loros_token");
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 function apiBase() {
-  return API_ORIGIN || "/api";
+  // Always use the rewrite proxy so cookies are same-origin.
+  return "/api";
 }
 
 export function apiUrl(path: string) {
