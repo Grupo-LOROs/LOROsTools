@@ -130,7 +130,7 @@ def _extract_entries(ws: openpyxl.worksheet.worksheet.Worksheet) -> list[Payment
                 detalle=_clean_text(ws.cell(row_idx, 7).value),
                 forma_pago=forma_pago,
                 importe=round(importe, 2),
-                fecha_pago=_as_date(ws.cell(row_idx, 16).value),
+                fecha_pago=_as_date(ws.cell(row_idx, 17).value),
             )
         )
     return entries
