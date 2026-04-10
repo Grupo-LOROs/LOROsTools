@@ -36,6 +36,7 @@ class CxpAutorizacionPagosTests(unittest.TestCase):
             "CONCEPTO DETALLADO",
             "FORMA DE PAGO",
             "IMPORTE PROVISIONADO MXN",
+            "IMPORTE PROVISIONADO DOLARES",
             "PAGADO ",
             "LUNES",
             "MARTES",
@@ -48,10 +49,10 @@ class CxpAutorizacionPagosTests(unittest.TestCase):
             bd.cell(11, col).value = value
 
         rows = [
-            ["DEESA", "COMERCIALIZACION", "COMER, EDIF, URBA", "RC COMER", "Proveedor A", "COMISIONES", "COMISIONES DE VENTA", "EFECTIVO", 100.0, 100.0, None, None, None, None, None, datetime(2026, 3, 6)],
-            ["DEESA", "COMERCIALIZACION", "COMER, EDIF, URBA", "RC COMER", "Proveedor B", "COMISIONES", "NO DEBE ENTRAR", "EFECTIVO", 25.0, 25.0, None, None, None, None, None, datetime(2026, 3, 4)],
-            ["DEESA", "OBRA PUBLICA", "OBRA PUBLICA", "RC URBA", "Proveedor C", "COMBUSTIBLE", "GASOLINA", "TRANSFERENCIA", 200.0, 200.0, None, None, None, None, None, datetime(2026, 2, 6)],
-            ["CORPORATIVO", "SOCIOS", "OFICINA CENTRAL, SOCIOS", "25. SOCIOS", "Proveedor D", "PRESTAMOS", "NO DEBE ENTRAR", "COMPROBACION", 50.0, 50.0, None, None, None, None, None, datetime(2026, 2, 5)],
+            ["DEESA", "COMERCIALIZACION", "COMER, EDIF, URBA", "RC COMER", "Proveedor A", "COMISIONES", "COMISIONES DE VENTA", "EFECTIVO", 100.0, None, 100.0, None, None, None, None, None, datetime(2026, 3, 6)],
+            ["DEESA", "COMERCIALIZACION", "COMER, EDIF, URBA", "RC COMER", "Proveedor B", "COMISIONES", "NO DEBE ENTRAR", "EFECTIVO", 25.0, None, 25.0, None, None, None, None, None, datetime(2026, 3, 4)],
+            ["DEESA", "OBRA PUBLICA", "OBRA PUBLICA", "RC URBA", "Proveedor C", "COMBUSTIBLE", "GASOLINA", "TRANSFERENCIA", 200.0, None, 200.0, None, None, None, None, None, datetime(2026, 2, 6)],
+            ["CORPORATIVO", "SOCIOS", "OFICINA CENTRAL, SOCIOS", "25. SOCIOS", "Proveedor D", "PRESTAMOS", "NO DEBE ENTRAR", "COMPROBACION", 50.0, None, 50.0, None, None, None, None, None, datetime(2026, 2, 5)],
         ]
         for row_idx, row_values in enumerate(rows, start=12):
             for col_idx, value in enumerate(row_values, start=1):
