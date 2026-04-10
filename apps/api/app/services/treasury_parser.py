@@ -462,27 +462,41 @@ def _extract_pdf_text(path: Path) -> tuple[str, bool]:
 
 def _detect_bank(text: str) -> str:
     normalized = _normalize(text[:3000])
-    # BBVA - check for Net Cash or general BBVA markers
-    if "bbva net cash" in normalized or "bbva bancomer" in normalized or normalized.startswith("bbva "):
-        return "BBVA"
-    if "bbva" in normalized and ("cuenta" in normalized or "movimientos" in normalized):
-        return "BBVA"
-    # Banregio
-    if "banregio" in normalized or "estado de cuenta unico" in normalized:
-        return "Banregio"
-    # BanBajio
-    if "banbajio" in normalized or "cuenta conecta banbajio" in normalized or "banco del bajio" in normalized or "banco bajio" in normalized:
-        return "BanBajio"
-    # Monex - check both old and new formats
+    # Use a small prefix for header-level checks (avoids matching bank names
+    # that appear inside transfer descriptions like "TRASPASO BBVA A SANTANDER").
+    header = _normalize(text[:200])
+
+    # 1. Santander – very specific markers
+    if "contrato cmc" in normalized or "consulta de movimientos de la cuenta de cheques" in normalized:
+        return "Santander"
+    if "santander" in header:
+        return "Santander"
+
+    # 2. Monex – specific markers
     if "corporativo monex" in normalized:
         return "Monex"
     if "monex" in normalized and ("contrato:" in normalized or "cta. clabe:" in normalized):
         return "Monex"
     if "estado de cuenta" in normalized and "monex" in normalized:
         return "Monex"
-    # Santander
-    if "santander" in normalized or "contrato cmc" in normalized:
-        return "Santander"
+
+    # 3. BanBajio
+    if "banbajio" in normalized or "cuenta conecta" in normalized or "banco del bajio" in normalized or "banco bajio" in normalized:
+        return "BanBajio"
+
+    # 4. Banregio
+    if "banregio" in normalized or "estado de cuenta unico" in normalized:
+        return "Banregio"
+
+    # 5. BBVA – checked last; use header or BBVA-specific column names to
+    #    avoid false positives from transfer descriptions mentioning "BBVA".
+    if "bbva net cash" in normalized or "bbva bancomer" in normalized:
+        return "BBVA"
+    if "bbva" in header:
+        return "BBVA"
+    if "detalle de movimientos" in normalized and "concepto/ referencia" in normalized:
+        return "BBVA"
+
     return "Desconocido"
 
 
@@ -626,10 +640,43 @@ def _parse_bbva(text: str, source_file: str, ocr_used: bool) -> TreasuryStatemen
         if contract_match:
             statement.contract = contract_match.group(1)
 
+    # Multi-line holder: _find_label_value may only grab the first line.
+    # Try to join with subsequent lines that look like name continuation (e.g. "DE CV").
+    if statement.account_holder:
+        # Find the line that starts the holder value and check if it continues
+        for i, line in enumerate(lines):
+            norm_line = _normalize(line)
+            if norm_line.startswith("nombre del cliente"):
+                # Collect value lines after label
+                colon_pos = line.find(":")
+                first_part = _normalize_spaces(line[colon_pos + 1:]) if colon_pos >= 0 else None
+                if not first_part and i + 1 < len(lines):
+                    first_part = _normalize_spaces(lines[i + 1])
+                    start_j = i + 2
+                else:
+                    start_j = i + 1
+                if first_part:
+                    parts = [first_part]
+                    for j in range(start_j, min(start_j + 3, len(lines))):
+                        continuation = _normalize_spaces(lines[j])
+                        if not continuation:
+                            break
+                        # Stop if we hit another label
+                        if ":" in continuation and any(kw in _normalize(continuation) for kw in ("detalle", "cuenta", "alias", "fecha", "periodo", "divisa", "contrato")):
+                            break
+                        # Continuation if it's short and looks like part of a name
+                        norm_cont = _normalize(continuation)
+                        if len(continuation) < 40 and ("de cv" in norm_cont or "sa " in norm_cont or norm_cont.startswith("de ") or norm_cont.startswith("sa")):
+                            parts.append(continuation)
+                        else:
+                            break
+                    statement.account_holder = _normalize_spaces(" ".join(parts))
+                break
+
     # OCR: account holder may appear fragmented after header
     if not statement.account_holder:
         holder_match = re.search(
-            r"((?:CONSTRUCCIONES|LORENTO|INMOBILIARIA|GRUPO)[A-Z\s]+(?:SA\s+DE\s+CV|S\.?A\.?\s+DE\s+C\.?V\.?))",
+            r"((?:CONSTRUCCIONES|LORENTO|INMOBILIARIA|GRUPO|ENERGIA)[A-Z\s]+(?:SA\s+DE\s+CV|S\.?A\.?\s+DE\s+C\.?V\.?))",
             text, re.IGNORECASE,
         )
         if holder_match:
@@ -1086,188 +1133,295 @@ def _parse_monex_new(text: str, source_file: str, ocr_used: bool) -> TreasurySta
     return statement
 
 
-def _parse_monex(text: str, source_file: str, ocr_used: bool) -> TreasuryStatement:
+def _parse_monex(text: str, source_file: str, ocr_used: bool) -> list[TreasuryStatement]:
     # Detect new format (2024+)
     normalized_header = _normalize(text[:3000])
     if "estado de cuenta" in normalized_header and "sistema corporativo monex" not in normalized_header:
-        return _parse_monex_new(text, source_file, ocr_used)
+        return [_parse_monex_new(text, source_file, ocr_used)]
 
     lines = _clean_lines(text)
+
+    # ── Header extraction ──
+    account_holder = _find_label_value(lines, ("Cliente",))
+    contract = _find_label_value(lines, ("Contrato",))
+    clabe = _find_label_value(lines, ("Clabe",))
+    account_number = contract  # Monex uses Contrato as account number
+
+    # Period from "del día DD/MM/YYYY al DD/MM/YYYY"
     period_match = re.search(r"del dia\s+([0-9/]+)\s+al\s+([0-9/]+)", _normalize(text), re.IGNORECASE)
-    statement = TreasuryStatement(
-        id=_slugify(Path(source_file).stem),
-        source_file=source_file,
-        bank="Monex",
-        ocr_used=ocr_used,
-        account_holder=_find_label_value(lines, ("Cliente",)),
-        contract=_find_label_value(lines, ("Contrato",)),
-        clabe=_find_label_value(lines, ("Clabe",)),
-        period_start=_parse_date(period_match.group(1)) if period_match else None,
-        period_end=_parse_date(period_match.group(2)) if period_match else None,
-        raw_text=text,
-    )
+    period_start = _parse_date(period_match.group(1)) if period_match else None
+    period_end = _parse_date(period_match.group(2)) if period_match else None
 
-    sequence = 1
-    currency: str | None = None
-    idx = 0
+    # ── Split text into currency sections ──
+    # "MOVIMIENTOS DE:PESO MEXICANO" / "MOVIMIENTOS DE:DOLAR AMERICANO"
+    MONEX_MONEY_RX = re.compile(r"^-?[\d,]+\.\d{2,6}$")
+    MONEX_SECTION_RX = re.compile(r"MOVIMIENTOS\s+DE\s*:", re.IGNORECASE)
 
-    def looks_new(start: int) -> bool:
-        line = lines[start]
-        if (
-            not line
-            or DATE_SLASH_RX.match(line)
-            or MONEY_ONLY_RX.match(line)
-            or line.startswith("MOVIMIENTOS DE:")
-            or line.startswith("Movimientos del dia:")
-            or line.startswith("Movimientos del día:")
-            or line in {"Inicio dia", "Inicio día", "Fin dia", "Fin día"}
-            or line.startswith("Fecha Emision:")
-            or line.startswith("Fecha Emisión:")
-            or line.startswith("Fecha Operacion:")
-            or line.startswith("Fecha Operación:")
-            or line.startswith("Pagina ")
-            or line.startswith("Página ")
-            or line in MONEX_SKIP_LINES
-        ):
-            return False
+    # Find all section boundaries
+    section_starts: list[tuple[int, str]] = []  # (line_index, currency)
+    for idx, line in enumerate(lines):
+        if MONEX_SECTION_RX.match(line):
+            raw_curr = _normalize_spaces(line.split(":", 1)[1]) if ":" in line else ""
+            norm_curr = _normalize(raw_curr) if raw_curr else ""
+            if "dolar" in norm_curr:
+                section_starts.append((idx, "USD"))
+            else:
+                section_starts.append((idx, "MXN"))
 
-        for offset in range(1, 8):
-            probe_a = start + offset
-            probe_b = probe_a + 1
-            if probe_b < len(lines) and DATE_SLASH_RX.match(lines[probe_a]) and DATE_SLASH_RX.match(lines[probe_b]):
-                return True
-        return True
+    # If no sections found, treat entire text as one MXN section
+    if not section_starts:
+        section_starts = [(0, "MXN")]
 
-    while idx < len(lines):
-        line = lines[idx]
-        if line.startswith("MOVIMIENTOS DE:"):
-            currency = _normalize_spaces(line.split(":", 1)[1])
-            idx += 1
-            continue
-        if line.startswith("Movimientos del dia:") or line.startswith("Movimientos del día:"):
-            idx += 1
-            continue
-        if line in {"Inicio dia", "Inicio día", "Fin dia", "Fin día"}:
-            idx += 2
-            continue
-        if line.startswith(("Fecha Emision:", "Fecha Emisión:", "Fecha Operacion:", "Fecha Operación:", "Pagina ", "Página ")) or line in MONEX_SKIP_LINES:
-            idx += 1
-            continue
-        if line.isdigit() and len(line) <= 2:
-            idx += 1
-            continue
-        if not looks_new(idx):
-            idx += 1
-            continue
+    statements: list[TreasuryStatement] = []
 
-        desc_lines: list[str] = []
-        while idx < len(lines) and not DATE_SLASH_RX.match(lines[idx]):
-            current = lines[idx]
-            if current not in MONEX_SKIP_LINES and not current.startswith(("Fecha Emision:", "Fecha Emisión:", "Fecha Operacion:", "Fecha Operación:", "Pagina ", "Página ")):
-                desc_lines.append(current)
-            idx += 1
+    for sec_idx, (sec_start, currency) in enumerate(section_starts):
+        sec_end = section_starts[sec_idx + 1][0] if sec_idx + 1 < len(section_starts) else len(lines)
+        section_lines = lines[sec_start:sec_end]
 
-        if idx + 1 >= len(lines) or not DATE_SLASH_RX.match(lines[idx]) or not DATE_SLASH_RX.match(lines[idx + 1]):
-            continue
+        stmt_id = _slugify(Path(source_file).stem)
+        if len(section_starts) > 1:
+            stmt_id = f"{stmt_id}-{currency.lower()}"
 
-        movement_date = _parse_date(lines[idx])
-        settlement_date = _parse_date(lines[idx + 1])
-        idx += 2
-        detail_lines: list[str] = []
-        while idx < len(lines):
-            probe = lines[idx]
-            if probe.startswith("MOVIMIENTOS DE:") or probe.startswith("Movimientos del dia:") or probe.startswith("Movimientos del día:") or probe in {"Inicio dia", "Inicio día", "Fin dia", "Fin día"}:
-                break
-            if probe.startswith(("Fecha Emision:", "Fecha Emisión:", "Fecha Operacion:", "Fecha Operación:", "Pagina ", "Página ")) or probe in MONEX_SKIP_LINES:
-                idx += 1
+        statement = TreasuryStatement(
+            id=stmt_id,
+            source_file=source_file,
+            bank="Monex",
+            ocr_used=ocr_used,
+            account_holder=account_holder,
+            account_number=account_number,
+            contract=contract,
+            clabe=clabe,
+            currency=currency,
+            period_start=period_start,
+            period_end=period_end,
+            raw_text=text,
+        )
+
+        if ocr_used:
+            statement.warnings.append("Se uso OCR para leer este estado de cuenta.")
+
+        # ── State machine to parse movements within section ──
+        # States: SCAN, DESC, DATA
+        sequence = 1
+        current_date: str | None = None
+        opening_balance: float | None = None
+        closing_balance: float | None = None
+        desc_buf: list[str] = []
+        s_idx = 0
+
+        while s_idx < len(section_lines):
+            line = section_lines[s_idx]
+
+            # Currency section header — skip
+            if MONEX_SECTION_RX.match(line):
+                s_idx += 1
                 continue
-            if DATE_SLASH_RX.match(probe) and idx + 1 < len(lines) and DATE_SLASH_RX.match(lines[idx + 1]):
-                break
-            detail_lines.append(probe)
-            idx += 1
 
-        amount = next((_parse_money(item) for item in reversed(detail_lines) if MONEY_ONLY_RX.match(item)), None)
-        reference = next(
-            (
-                item
-                for item in detail_lines
-                if item not in {"0", "0.000000"}
-                and (item.isdigit() or item.startswith("DIVISA"))
-            ),
-            None,
-        )
-        debit = abs(amount) if amount is not None and amount < 0 else None
-        credit = amount if amount is not None and amount > 0 else None
-        description = _normalize_spaces(" ".join(desc_lines))
-        raw_text_block = _normalize_spaces(" ".join(desc_lines + detail_lines))
-        concept = None
-        if detail_lines:
-            concept = _normalize_spaces(" ".join(item for item in detail_lines if not MONEY_ONLY_RX.match(item)))
+            # Day group header: "Movimientos del día: DD/MM/YYYY"
+            day_match = re.match(r"Movimientos del d[ií]a\s*:\s*(\d{2}/\d{2}/\d{4})", line)
+            if day_match:
+                current_date = _parse_date(day_match.group(1))
+                desc_buf.clear()
+                s_idx += 1
+                continue
 
-        statement.movements.append(
-            _make_movement(
-                statement,
-                sequence,
-                currency=currency,
-                movement_date=movement_date,
-                settlement_date=settlement_date,
-                description=description,
-                concept=concept,
-                reference=reference,
-                debit=debit,
-                credit=credit,
-                raw_text=raw_text_block,
-            )
-        )
-        sequence += 1
+            # "Inicio día" followed by balance on next line
+            if line in {"Inicio dia", "Inicio día"}:
+                s_idx += 1
+                if s_idx < len(section_lines):
+                    bal = _parse_money(section_lines[s_idx])
+                    if bal is not None and opening_balance is None:
+                        opening_balance = bal
+                    s_idx += 1
+                desc_buf.clear()
+                continue
 
-    if not statement.movements:
-        statement.warnings.append("No se pudieron estructurar movimientos de Monex.")
-    else:
-        incomplete = sum(1 for item in statement.movements if item.debit is None and item.credit is None)
-        if incomplete:
-            statement.warnings.append(f"{incomplete} movimientos de Monex requieren revision manual de importe.")
-        currencies = sorted({item.currency for item in statement.movements if item.currency})
-        if len(currencies) > 1:
-            statement.currency = "MULTI"
+            # "Fin día" followed by balance on next line
+            if line in {"Fin dia", "Fin día"}:
+                s_idx += 1
+                if s_idx < len(section_lines):
+                    bal = _parse_money(section_lines[s_idx])
+                    if bal is not None:
+                        closing_balance = bal
+                    s_idx += 1
+                desc_buf.clear()
+                continue
 
-    # Derive period from movement dates when regex didn't match
-    if statement.movements and not statement.period_start:
-        dates = sorted(d for m in statement.movements if (d := m.movement_date))
-        if dates:
-            statement.period_start = dates[0]
-            statement.period_end = dates[-1]
+            # Skip metadata / pagination / column headers
+            if line.startswith(("Fecha Emision:", "Fecha Emisión:", "Fecha Operacion:",
+                                "Fecha Operación:", "Pagina ", "Página ")) or line in MONEX_SKIP_LINES:
+                s_idx += 1
+                continue
+            if line.isdigit() and len(line) <= 2:
+                s_idx += 1
+                continue
 
-    # Monex: try to find account number from "Cuenta" label
-    if not statement.account_number:
-        statement.account_number = _find_label_value(lines, ("Cuenta",))
+            # Data row detection: line is DD/MM/YYYY (fecha_oper)
+            if DATE_SLASH_RX.match(line):
+                movement_date = _parse_date(line) or current_date
+                s_idx += 1
 
-    # Extract opening/closing balance from summary
-    if statement.opening_balance is None:
-        saldo_ini_match = re.search(r"SALDO\s+INICIAL[:\s]*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-        if saldo_ini_match:
-            statement.opening_balance = _parse_money(saldo_ini_match.group(1))
-    if statement.closing_balance is None:
-        saldo_fin_match = re.search(r"SALDO\s+FINAL[:\s]*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-        if saldo_fin_match:
-            statement.closing_balance = _parse_money(saldo_fin_match.group(1))
+                # Next line should be fecha_liq (DD/MM/YYYY)
+                settlement_date = None
+                if s_idx < len(section_lines) and DATE_SLASH_RX.match(section_lines[s_idx]):
+                    settlement_date = _parse_date(section_lines[s_idx])
+                    s_idx += 1
 
-    # Total credits/debits from summary
-    if statement.total_credits is None:
-        abonos_match = re.search(r"\+?\s*(?:Total\s+)?abonos[:\s]*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-        if abonos_match:
-            statement.total_credits = _parse_money(abonos_match.group(1))
-    if statement.total_debits is None:
-        cargos_match = re.search(r"-?\s*(?:Total\s+)?cargos[:\s]*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-        if cargos_match:
-            statement.total_debits = _parse_money(cargos_match.group(1))
+                # Collect remaining data fields until we hit a description line,
+                # a structural marker, or end of section.
+                # Data fields: [emisora], referencia, titulos, cantidad, plazo,
+                #              tasa_rend, prima_unitaria, importe
+                data_tokens: list[str] = []
+                while s_idx < len(section_lines):
+                    probe = section_lines[s_idx]
+                    # Stop at structural markers
+                    if (probe.startswith("Movimientos del d") or
+                        probe in {"Inicio dia", "Inicio día", "Fin dia", "Fin día"} or
+                        MONEX_SECTION_RX.match(probe)):
+                        break
+                    # Stop at column headers / metadata
+                    if probe in MONEX_SKIP_LINES or probe.startswith(("Fecha Emision:", "Fecha Emisión:",
+                            "Fecha Operacion:", "Fecha Operación:", "Pagina ", "Página ")):
+                        break
+                    # If we hit a non-date, non-numeric line that looks like
+                    # a description for the NEXT movement, stop
+                    if (not MONEX_MONEY_RX.match(probe) and
+                        not DATE_SLASH_RX.match(probe) and
+                        not probe.isdigit() and
+                        not probe.startswith("DIVISA") and
+                        not re.match(r"^-?[\d,]+$", probe)):
+                        break
+                    data_tokens.append(probe)
+                    s_idx += 1
 
-    return statement
+                # The last numeric value is the IMPORTE
+                reference = None
+                amount = None
+                for dt in data_tokens:
+                    if dt.startswith("DIVISA") or (dt.isdigit() and len(dt) >= 4 and dt != "0"):
+                        reference = dt
+                    if MONEX_MONEY_RX.match(dt):
+                        amount = _parse_money(dt)
+
+                debit = abs(amount) if amount is not None and amount < 0 else None
+                credit = amount if amount is not None and amount > 0 else None
+
+                description = _normalize_spaces(" ".join(desc_buf))
+                desc_buf.clear()
+
+                if description or debit or credit:
+                    statement.movements.append(
+                        _make_movement(
+                            statement,
+                            sequence,
+                            currency=currency,
+                            movement_date=movement_date,
+                            settlement_date=settlement_date,
+                            description=description,
+                            reference=reference,
+                            debit=debit,
+                            credit=credit,
+                            raw_text=_normalize_spaces(line),
+                        )
+                    )
+                    sequence += 1
+                continue
+
+            # Not a structural line and not a data row — accumulate as description
+            desc_buf.append(line)
+            s_idx += 1
+
+        # Set balances
+        if opening_balance is not None:
+            statement.opening_balance = opening_balance
+        if closing_balance is not None:
+            statement.closing_balance = closing_balance
+
+        # Derive period from movement dates when header didn't have it
+        if statement.movements and not statement.period_start:
+            dates = sorted(d for m in statement.movements if (d := m.movement_date))
+            if dates:
+                statement.period_start = dates[0]
+                statement.period_end = dates[-1]
+
+        # Summary totals
+        credits = [item.credit for item in statement.movements if item.credit]
+        debits = [item.debit for item in statement.movements if item.debit]
+        if credits:
+            statement.total_credits = round(sum(credits), 2)
+        if debits:
+            statement.total_debits = round(sum(debits), 2)
+
+        if not statement.movements:
+            statement.warnings.append("No se pudieron estructurar movimientos de Monex.")
+        else:
+            incomplete = sum(1 for item in statement.movements if item.debit is None and item.credit is None)
+            if incomplete:
+                statement.warnings.append(f"{incomplete} movimientos de Monex requieren revision manual de importe.")
+
+        statements.append(statement)
+
+    # If no statements were created, return a single empty one
+    if not statements:
+        statements.append(TreasuryStatement(
+            id=_slugify(Path(source_file).stem),
+            source_file=source_file,
+            bank="Monex",
+            ocr_used=ocr_used,
+            account_holder=account_holder,
+            account_number=account_number,
+            contract=contract,
+            clabe=clabe,
+            raw_text=text,
+            warnings=["No se pudieron estructurar movimientos de Monex."],
+        ))
+
+    return statements
 
 
 def _parse_santander(text: str, source_file: str, ocr_used: bool) -> TreasuryStatement:
     lines = _clean_lines(text)
     contract_value = _find_label_value(lines, ("Contrato CMC",))
+
+    # Extract holder from "Contrato CMC: NUMBER HOLDER_NAME" line
+    account_holder = None
+    if contract_value:
+        # contract_value is everything after "Contrato CMC: "
+        # Format: "80152454770 ENERGIA RENOVABLE DE AMERICA SA DE CV"
+        parts = contract_value.split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            account_holder = _normalize_spaces(parts[1])
+        elif not parts[0].isdigit():
+            account_holder = _normalize_spaces(contract_value)
+    # Also try multi-line: the holder may be on the next line after the CMC number
+    if not account_holder:
+        for i, line in enumerate(lines):
+            if _normalize(line).startswith("contrato cmc"):
+                # Look for holder name in lines following the CMC line
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    candidate = _normalize_spaces(lines[j])
+                    if candidate and not candidate[0].isdigit() and len(candidate) > 5:
+                        account_holder = candidate
+                        break
+                break
+
+    # Extract period from "Periodo: DD/MM/YYYY al DD/MM/YYYY"
+    period_start = None
+    period_end = None
+    period_match = re.search(r"Periodo:\s*([0-9/]+)\s+al\s+([0-9/]+)", text)
+    if period_match:
+        period_start = _parse_date(period_match.group(1))
+        period_end = _parse_date(period_match.group(2))
+    elif re.search(r"Periodo:\s*([0-9/]+)", text):
+        period_start = _parse_date(re.search(r"Periodo:\s*([0-9/]+)", text).group(1))
+
+    # Currency from "Saldo Inicial: $1,912.15 MXN"
+    currency = "MXN"
+    curr_match = re.search(r"Saldo\s+Inicial:\s*\$[0-9,]+\.[0-9]{2}\s+(MXN|USD|DLS)", text, re.IGNORECASE)
+    if curr_match:
+        curr_text = curr_match.group(1).upper()
+        currency = "USD" if curr_text in ("USD", "DLS") else "MXN"
+
     statement = TreasuryStatement(
         id=_slugify(Path(source_file).stem),
         source_file=source_file,
@@ -1275,14 +1429,14 @@ def _parse_santander(text: str, source_file: str, ocr_used: bool) -> TreasurySta
         ocr_used=ocr_used,
         contract=contract_value,
         account_number=_find_label_value(lines, ("Numero de Cuenta", "Número de Cuenta")),
-        account_holder=_normalize_spaces(contract_value.split(" ", 1)[1]) if contract_value and " " in contract_value else None,
-        period_start=_parse_date(re.search(r"Periodo:\s*([0-9/]+)", text).group(1)) if re.search(r"Periodo:\s*([0-9/]+)", text) else None,
-        period_end=_parse_date(re.search(r"Periodo:\s*[0-9/]+\s+al\s+([0-9/]+)", text).group(1)) if re.search(r"Periodo:\s*[0-9/]+\s+al\s+([0-9/]+)", text) else None,
+        account_holder=account_holder,
+        period_start=period_start,
+        period_end=period_end,
         opening_balance=_parse_money(re.search(r"Saldo Inicial:\s*\$([0-9,]+\.[0-9]{2})", text).group(1)) if re.search(r"Saldo Inicial:\s*\$([0-9,]+\.[0-9]{2})", text) else None,
         closing_balance=_parse_money(re.search(r"Saldo Final:\s*\$([0-9,]+\.[0-9]{2})", text).group(1)) if re.search(r"Saldo Final:\s*\$([0-9,]+\.[0-9]{2})", text) else None,
         total_credits=_parse_money(re.search(r"Importe Total Abonos:\s*\$([0-9,]+\.[0-9]{2})", text).group(1)) if re.search(r"Importe Total Abonos:\s*\$([0-9,]+\.[0-9]{2})", text) else None,
         total_debits=_parse_money(re.search(r"Importe Total Cargos:\s*\$([0-9,]+\.[0-9]{2})", text).group(1)) if re.search(r"Importe Total Cargos:\s*\$([0-9,]+\.[0-9]{2})", text) else None,
-        currency="MXN",
+        currency=currency,
         raw_text=text,
     )
 
@@ -1294,14 +1448,12 @@ def _parse_santander(text: str, source_file: str, ocr_used: bool) -> TreasurySta
         if clabe_match:
             statement.clabe = clabe_match.group(1)
 
-    # Currency from MONEDA field
+    # Currency from MONEDA field (override if present)
     moneda = _find_label_value(lines, ("MONEDA", "Moneda"))
     if moneda:
         moneda_norm = _normalize(moneda)
         if "dolar" in moneda_norm or "usd" in moneda_norm:
             statement.currency = "USD"
-        else:
-            statement.currency = "MXN"
 
     # Alternate period format: DEL DD-MMM-YYYY AL DD-MMM-YYYY
     if not statement.period_start:
@@ -1323,104 +1475,200 @@ def _parse_santander(text: str, source_file: str, ocr_used: bool) -> TreasurySta
         if saldo_ant:
             statement.opening_balance = _parse_money(saldo_ant)
 
+    # ── Parse movements ──
+    # Strategy: work on the raw text to handle line-breaks within rows.
+    # Join everything into a single string for regex-based extraction.
+    # Santander rows start with an 11-digit account number followed by DDMMYYYY
+    # (which may be split across lines as e.g. "27102\n025").
+
+    # First, find the header line to know where movements begin
+    mov_start = 0
+    for i, line in enumerate(lines):
+        norm = _normalize(line)
+        if "cuenta" in norm and "fecha" in norm and "hora" in norm and "sucursal" in norm:
+            mov_start = i + 1
+            break
+
+    # Build a single blob from movement lines onwards
+    mov_text = "\n".join(lines[mov_start:])
+
+    # Pattern: 11-digit account number followed by 8 digits (DDMMYYYY) possibly
+    # with whitespace/newlines inserted, then HH:MM time, then branch (3-4 digits).
+    # We use a regex that tolerates whitespace inside the date digits.
+    SANT_ROW_RX = re.compile(
+        r"(\d{11})\s+"           # account number
+        r"(\d[\d\s]{6,9}\d)\s+"  # DDMMYYYY (up to 2 spaces/newlines inside)
+        r"(\d{2}:\d{2})\s+"      # time
+        r"(\d{3,4})\s+"          # branch
+    )
+
     sequence = 1
-    idx = 0
-    while idx < len(lines):
-        if not SANTANDER_ACCOUNT_RX.match(lines[idx]):
-            idx += 1
-            continue
-        if idx + 7 >= len(lines) or not SANTANDER_DATE_PART_RX.match(lines[idx + 1]) or not TIME_RX.match(lines[idx + 3]) or not BRANCH_RX.match(lines[idx + 4]):
-            idx += 1
-            continue
+    matches = list(SANT_ROW_RX.finditer(mov_text))
+    for mi, m in enumerate(matches):
+        # Determine where this row's data ends (start of next row or end)
+        row_start = m.end()
+        row_end = matches[mi + 1].start() if mi + 1 < len(matches) else len(mov_text)
+        row_body = mov_text[row_start:row_end]
 
-        movement_date = _parse_santander_date(lines[idx + 1], lines[idx + 2])
-        time = lines[idx + 3]
-        branch = lines[idx + 4]
-        cursor = idx + 5
+        # Clean up the date: remove any whitespace
+        date_digits = re.sub(r"\s+", "", m.group(2))
+        movement_date = None
+        if len(date_digits) == 8:
+            movement_date = _parse_date(f"{date_digits[:2]}/{date_digits[2:4]}/{date_digits[4:]}")
+        time_val = m.group(3)
+        branch = m.group(4)
+
+        # The row body contains: Description (possibly multi-line), then
+        # Importe Cargo, Importe Abono, Saldo, Referencia, Concepto, Descripción Larga.
+        # Amounts may be on their own lines OR embedded as tokens within a line.
+        body_lines = [l.strip() for l in row_body.splitlines() if l.strip()]
+
+        # Filter out footer lines
+        filtered: list[str] = []
+        for bl in body_lines:
+            norm_bl = _normalize(bl)
+            if norm_bl.startswith("para dudas o aclaraciones") or norm_bl.startswith("banco santander") or norm_bl.startswith("enlace http") or norm_bl.startswith("este documento no es"):
+                break
+            # Skip repeated header lines
+            if "cuenta" in norm_bl and "fecha" in norm_bl and "hora" in norm_bl and "sucursal" in norm_bl:
+                continue
+            filtered.append(bl)
+
+        # Tokenise: split each line into individual tokens and try to find
+        # three consecutive money tokens (cargo, abono, saldo).
+        all_tokens: list[str] = []
+        for bl in filtered:
+            all_tokens.extend(bl.split())
+
+        money_indices: list[int] = []
+        for ti, tok in enumerate(all_tokens):
+            if MONEY_ONLY_RX.match(tok):
+                money_indices.append(ti)
+
+        # Find the first run of 3+ consecutive money-token indices.
+        cargo_tok_idx: int | None = None
+        if len(money_indices) >= 3:
+            for ki in range(len(money_indices) - 2):
+                if money_indices[ki + 1] == money_indices[ki] + 1 and money_indices[ki + 2] == money_indices[ki] + 2:
+                    cargo_tok_idx = money_indices[ki]
+                    break
+        if cargo_tok_idx is None and len(money_indices) >= 2:
+            for ki in range(len(money_indices) - 1):
+                if money_indices[ki + 1] == money_indices[ki] + 1:
+                    cargo_tok_idx = money_indices[ki]
+                    break
+
         desc_lines: list[str] = []
-        while cursor < len(lines) and not MONEY_ONLY_RX.match(lines[cursor]):
-            if SANTANDER_ACCOUNT_RX.match(lines[cursor]):
-                break
-            desc_lines.append(lines[cursor])
-            cursor += 1
+        debit = None
+        credit = None
+        balance = None
+        reference = None
+        concept = None
+        long_description = None
 
-        if cursor + 2 >= len(lines):
-            idx = cursor
+        if cargo_tok_idx is not None:
+            # Tokens before the money run are description
+            desc_tokens = [t for t in all_tokens[:cargo_tok_idx] if not MONEY_ONLY_RX.match(t)]
+            desc_lines = [" ".join(desc_tokens)] if desc_tokens else []
+
+            debit_val = _parse_money(all_tokens[cargo_tok_idx])
+            debit = debit_val if debit_val and debit_val > 0 else None
+            if cargo_tok_idx + 1 < len(all_tokens):
+                credit_val = _parse_money(all_tokens[cargo_tok_idx + 1])
+                credit = credit_val if credit_val and credit_val > 0 else None
+            if cargo_tok_idx + 2 < len(all_tokens):
+                balance = _parse_money(all_tokens[cargo_tok_idx + 2])
+
+            # Remaining tokens after the 3 money values: reference, concepto, long desc
+            after_money = cargo_tok_idx + 3
+            remaining_tokens = [t for t in all_tokens[after_money:] if not MONEY_ONLY_RX.match(t)]
+            # The reference is usually the first non-money token after saldo
+            if remaining_tokens:
+                reference = remaining_tokens[0]
+            # Concepto and long description: join remaining tokens
+            if len(remaining_tokens) > 1:
+                concept = remaining_tokens[1]
+            if len(remaining_tokens) > 2:
+                long_description = " ".join(remaining_tokens[2:])
+        else:
+            # No money found — just capture description
+            desc_lines = [" ".join(t for t in all_tokens if not MONEY_ONLY_RX.match(t))]
+
+        description = " ".join(desc_lines) if desc_lines else None
+        if not description and not debit and not credit:
             continue
 
-        debit = _parse_money(lines[cursor]) or None
-        credit = _parse_money(lines[cursor + 1]) or None
-        balance = _parse_money(lines[cursor + 2])
-        cursor += 3
-        reference = lines[cursor] if cursor < len(lines) else None
-        cursor += 1
-        extra_lines: list[str] = []
-        while cursor < len(lines) and not SANTANDER_ACCOUNT_RX.match(lines[cursor]):
-            normalized = _normalize(lines[cursor])
-            if normalized.startswith("para dudas o aclaraciones") or normalized.startswith("banco santander") or normalized.startswith("enlace http") or normalized.startswith("este documento no es"):
-                break
-            extra_lines.append(lines[cursor])
-            cursor += 1
-
-        concept = extra_lines[0] if extra_lines else None
-        long_description = " ".join(extra_lines[1:]) if len(extra_lines) > 1 else None
         statement.movements.append(
             _make_movement(
                 statement,
                 sequence,
                 movement_date=movement_date,
-                time=time,
+                time=time_val,
                 branch=branch,
-                description=" ".join(desc_lines),
+                description=description,
                 concept=concept,
                 long_description=long_description,
                 reference=reference,
                 debit=debit,
                 credit=credit,
                 balance=balance,
-                raw_text=" | ".join(desc_lines + [reference or ""] + extra_lines),
+                raw_text=" | ".join(filtered),
             )
         )
         sequence += 1
-        idx = cursor
+
+    # Derive period from movement dates if header didn't have it
+    if statement.movements and not statement.period_start:
+        dates = sorted(d for mv in statement.movements if (d := mv.movement_date))
+        if dates:
+            statement.period_start = dates[0]
+            statement.period_end = dates[-1]
 
     return statement
 
 
 # ── Public API ────────────────────────────────────────────
 
-def parse_statement(path: Path) -> TreasuryStatement:
-    """Parse a single bank statement PDF and return structured data."""
+def parse_statement(path: Path) -> list[TreasuryStatement]:
+    """Parse a single bank statement PDF and return structured data.
+
+    Returns a list because some banks (e.g. Monex) produce multiple
+    statements per file (one per currency section).
+    """
     text, ocr_used = _extract_pdf_text(path)
     bank = _detect_bank(text)
     if bank == "BBVA":
-        statement = _parse_bbva(text, path.name, ocr_used)
+        statements = [_parse_bbva(text, path.name, ocr_used)]
     elif bank == "Banregio":
-        statement = _parse_banregio(text, path.name, ocr_used)
+        statements = [_parse_banregio(text, path.name, ocr_used)]
     elif bank == "BanBajio":
-        statement = _parse_bajio(text, path.name, ocr_used)
+        statements = [_parse_bajio(text, path.name, ocr_used)]
     elif bank == "Monex":
-        statement = _parse_monex(text, path.name, ocr_used)
+        statements = _parse_monex(text, path.name, ocr_used)
     elif bank == "Santander":
-        statement = _parse_santander(text, path.name, ocr_used)
+        statements = [_parse_santander(text, path.name, ocr_used)]
     else:
-        statement = TreasuryStatement(
+        statements = [TreasuryStatement(
             id=_slugify(path.stem),
             source_file=path.name,
             bank=bank,
             ocr_used=ocr_used,
             raw_text=text,
             warnings=["No se reconocio el banco del PDF."],
-        )
+        )]
 
-    if not statement.movements:
-        statement.warnings.append("No se detectaron movimientos estructurados en este archivo.")
-    return statement
+    for statement in statements:
+        if not statement.movements:
+            statement.warnings.append("No se detectaron movimientos estructurados en este archivo.")
+    return statements
 
 
 def parse_statements(paths: list[Path]) -> list[TreasuryStatement]:
     """Parse multiple bank statement PDFs."""
-    return [parse_statement(path) for path in paths]
+    result: list[TreasuryStatement] = []
+    for path in paths:
+        result.extend(parse_statement(path))
+    return result
 
 
 def analysis_payload(statements: list[TreasuryStatement]) -> dict[str, Any]:

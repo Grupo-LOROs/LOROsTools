@@ -77,7 +77,7 @@ async def _parse_uploaded_statements(files: list[UploadFile], root: Path) -> lis
         safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(upload.filename or f"file_{index}.pdf").name)
         target = root / f"{index:02d}-{safe_name}"
         target.write_bytes(await upload.read())
-        statements.append(parse_statement(target))
+        statements.extend(parse_statement(target))
     return statements
 
 
